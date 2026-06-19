@@ -24,22 +24,38 @@ func kafkaAddr(t *testing.T) string {
 	return addr
 }
 
-// ensureTopic creates a topic via the broker (which is also the controller in
-// single-node KRaft mode). This is necessary because auto-topic-creation on
-// the broker is not guaranteed in all environments.
+// ensureTopic creates a topic and blocks until it appears in broker metadata.
+// CreateTopics returns before the broker fully applies the change; polling
+// ReadPartitions on a fresh connection gives us a definitive ready signal.
 func ensureTopic(t *testing.T, addr, topic string) {
 	t.Helper()
+
 	conn, err := kafka.Dial("tcp", addr)
 	require.NoError(t, err)
-	defer conn.Close() //nolint:errcheck
-
-	// In single-node KRaft the broker IS the controller; CreateTopics succeeds directly.
 	err = conn.CreateTopics(kafka.TopicConfig{
 		Topic:             topic,
 		NumPartitions:     1,
 		ReplicationFactor: 1,
 	})
+	conn.Close() //nolint:errcheck
 	require.NoError(t, err, fmt.Sprintf("create topic %q", topic))
+
+	// Poll until the topic is visible in a fresh metadata fetch.
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		c, err := kafka.Dial("tcp", addr)
+		if err != nil {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		parts, err := c.ReadPartitions(topic)
+		c.Close() //nolint:errcheck
+		if err == nil && len(parts) > 0 {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("topic %q did not become available within deadline", topic)
 }
 
 func TestKafkaSource_ReadsMessages(t *testing.T) {
