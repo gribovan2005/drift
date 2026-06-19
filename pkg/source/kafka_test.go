@@ -23,11 +23,25 @@ func kafkaAddr(t *testing.T) string {
 	return addr
 }
 
+// writeRetry writes msg to w, retrying until success or deadline.
+// AllowAutoTopicCreation on the writer handles topic creation; retrying
+// handles the KRaft lag between leader election and metadata visibility.
+func writeRetry(t *testing.T, w *kafka.Writer, msg kafka.Message) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := w.WriteMessages(context.Background(), msg); err == nil {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatal("write timed out — topic leader not ready within deadline")
+}
+
 func TestKafkaSource_ReadsMessages(t *testing.T) {
 	addr := kafkaAddr(t)
 	topic := "drift-test-source-" + t.Name()
 
-	// Pre-seed the topic with two records via the low-level writer.
 	w := &kafka.Writer{
 		Addr:                   kafka.TCP(addr),
 		Topic:                  topic,
@@ -37,10 +51,10 @@ func TestKafkaSource_ReadsMessages(t *testing.T) {
 		{Payload: map[string]any{"n": float64(1)}},
 		{Payload: map[string]any{"n": float64(2)}},
 	}
-	for _, r := range records {
-		body, _ := json.Marshal(r)
-		require.NoError(t, w.WriteMessages(context.Background(), kafka.Message{Value: body}))
-	}
+	body0, _ := json.Marshal(records[0])
+	writeRetry(t, w, kafka.Message{Value: body0}) // first write creates & waits for topic
+	body1, _ := json.Marshal(records[1])
+	require.NoError(t, w.WriteMessages(context.Background(), kafka.Message{Value: body1}))
 	w.Close() //nolint:errcheck
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -77,11 +91,9 @@ func TestKafkaSource_SkipsMalformedMessages(t *testing.T) {
 		Topic:                  topic,
 		AllowAutoTopicCreation: true,
 	}
-	// One bad message, one good message.
-	w.WriteMessages(context.Background(), //nolint:errcheck
-		kafka.Message{Value: []byte("not-json")},
-		kafka.Message{Value: func() []byte { b, _ := json.Marshal(core.Record{Payload: map[string]any{"ok": true}}); return b }()},
-	)
+	writeRetry(t, w, kafka.Message{Value: []byte("not-json")}) // creates topic, waits for leader
+	goodBody, _ := json.Marshal(core.Record{Payload: map[string]any{"ok": true}})
+	require.NoError(t, w.WriteMessages(context.Background(), kafka.Message{Value: goodBody}))
 	w.Close() //nolint:errcheck
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
