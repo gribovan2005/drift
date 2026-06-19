@@ -40,7 +40,8 @@ func ensureTopic(t *testing.T, addr, topic string) {
 	conn.Close() //nolint:errcheck
 	require.NoError(t, err, fmt.Sprintf("create topic %q", topic))
 
-	// Poll until the topic is visible in a fresh metadata fetch.
+	// Poll until our specific topic appears in broker metadata.
+	// ReadPartitions returns ALL topics in the response, so we must filter by name.
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		c, err := kafka.Dial("tcp", addr)
@@ -50,8 +51,12 @@ func ensureTopic(t *testing.T, addr, topic string) {
 		}
 		parts, err := c.ReadPartitions(topic)
 		c.Close() //nolint:errcheck
-		if err == nil && len(parts) > 0 {
-			return
+		if err == nil {
+			for _, p := range parts {
+				if p.Topic == topic {
+					return
+				}
+			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
