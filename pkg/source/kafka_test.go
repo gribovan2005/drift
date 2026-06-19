@@ -3,7 +3,6 @@ package source
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -24,55 +23,38 @@ func kafkaAddr(t *testing.T) string {
 	return addr
 }
 
-// ensureTopic creates a topic and blocks until its partition leader is ready
-// to accept writes. Metadata appearing in ReadPartitions is not enough —
-// in KRaft the partition leader election may lag behind the metadata update.
-func ensureTopic(t *testing.T, addr, topic string) {
+// writeRetry writes msg to w, retrying until success or deadline.
+// AllowAutoTopicCreation on the writer handles topic creation; retrying
+// handles the KRaft lag between leader election and metadata visibility.
+func writeRetry(t *testing.T, w *kafka.Writer, msg kafka.Message) {
 	t.Helper()
-
-	conn, err := kafka.Dial("tcp", addr)
-	require.NoError(t, err)
-	err = conn.CreateTopics(kafka.TopicConfig{
-		Topic:             topic,
-		NumPartitions:     1,
-		ReplicationFactor: 1,
-	})
-	conn.Close() //nolint:errcheck
-	require.NoError(t, err, fmt.Sprintf("create topic %q", topic))
-
-	// Poll until DialLeader succeeds — that proves the partition is writable.
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		lc, err := kafka.DialLeader(ctx, "tcp", addr, topic, 0)
-		cancel()
-		if err == nil {
-			lc.Close() //nolint:errcheck
+		if err := w.WriteMessages(context.Background(), msg); err == nil {
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("partition leader for topic %q not ready within deadline", topic)
+	t.Fatal("write timed out — topic leader not ready within deadline")
 }
 
 func TestKafkaSource_ReadsMessages(t *testing.T) {
 	addr := kafkaAddr(t)
 	topic := "drift-test-source-" + t.Name()
-	ensureTopic(t, addr, topic)
 
-	// Pre-seed the topic with two records via the low-level writer.
 	w := &kafka.Writer{
-		Addr:  kafka.TCP(addr),
-		Topic: topic,
+		Addr:                   kafka.TCP(addr),
+		Topic:                  topic,
+		AllowAutoTopicCreation: true,
 	}
 	records := []core.Record{
 		{Payload: map[string]any{"n": float64(1)}},
 		{Payload: map[string]any{"n": float64(2)}},
 	}
-	for _, r := range records {
-		body, _ := json.Marshal(r)
-		require.NoError(t, w.WriteMessages(context.Background(), kafka.Message{Value: body}))
-	}
+	body0, _ := json.Marshal(records[0])
+	writeRetry(t, w, kafka.Message{Value: body0}) // first write creates & waits for topic
+	body1, _ := json.Marshal(records[1])
+	require.NoError(t, w.WriteMessages(context.Background(), kafka.Message{Value: body1}))
 	w.Close() //nolint:errcheck
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -103,14 +85,14 @@ func TestKafkaSource_ReadsMessages(t *testing.T) {
 func TestKafkaSource_SkipsMalformedMessages(t *testing.T) {
 	addr := kafkaAddr(t)
 	topic := "drift-test-malformed-" + t.Name()
-	ensureTopic(t, addr, topic)
 
 	w := &kafka.Writer{
-		Addr:  kafka.TCP(addr),
-		Topic: topic,
+		Addr:                   kafka.TCP(addr),
+		Topic:                  topic,
+		AllowAutoTopicCreation: true,
 	}
+	writeRetry(t, w, kafka.Message{Value: []byte("not-json")}) // creates topic, waits for leader
 	goodBody, _ := json.Marshal(core.Record{Payload: map[string]any{"ok": true}})
-	require.NoError(t, w.WriteMessages(context.Background(), kafka.Message{Value: []byte("not-json")}))
 	require.NoError(t, w.WriteMessages(context.Background(), kafka.Message{Value: goodBody}))
 	w.Close() //nolint:errcheck
 

@@ -3,7 +3,6 @@ package sink
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -23,42 +22,11 @@ func kafkaAddr(t *testing.T) string {
 	return addr
 }
 
-// ensureTopic creates a topic and blocks until its partition leader is ready
-// to accept writes. Metadata appearing in ReadPartitions is not enough —
-// in KRaft the partition leader election may lag behind the metadata update.
-func ensureTopic(t *testing.T, addr, topic string) {
-	t.Helper()
-
-	conn, err := kafka.Dial("tcp", addr)
-	require.NoError(t, err)
-	err = conn.CreateTopics(kafka.TopicConfig{
-		Topic:             topic,
-		NumPartitions:     1,
-		ReplicationFactor: 1,
-	})
-	conn.Close() //nolint:errcheck
-	require.NoError(t, err, fmt.Sprintf("create topic %q", topic))
-
-	// Poll until DialLeader succeeds — that proves the partition is writable.
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		lc, err := kafka.DialLeader(ctx, "tcp", addr, topic, 0)
-		cancel()
-		if err == nil {
-			lc.Close() //nolint:errcheck
-			return
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	t.Fatalf("partition leader for topic %q not ready within deadline", topic)
-}
-
 func TestKafkaSink_WritesRecords(t *testing.T) {
 	addr := kafkaAddr(t)
 	topic := "drift-test-sink-" + t.Name()
-	ensureTopic(t, addr, topic)
 
+	// Sink writer has AllowAutoTopicCreation: true — topic is created on first write.
 	snk, err := NewKafka(KafkaConfig{
 		Brokers: []string{addr},
 		Topic:   topic,
