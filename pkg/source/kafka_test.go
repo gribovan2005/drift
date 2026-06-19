@@ -3,6 +3,7 @@ package source
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -23,15 +24,33 @@ func kafkaAddr(t *testing.T) string {
 	return addr
 }
 
+// ensureTopic creates a topic via the broker (which is also the controller in
+// single-node KRaft mode). This is necessary because auto-topic-creation on
+// the broker is not guaranteed in all environments.
+func ensureTopic(t *testing.T, addr, topic string) {
+	t.Helper()
+	conn, err := kafka.Dial("tcp", addr)
+	require.NoError(t, err)
+	defer conn.Close() //nolint:errcheck
+
+	// In single-node KRaft the broker IS the controller; CreateTopics succeeds directly.
+	err = conn.CreateTopics(kafka.TopicConfig{
+		Topic:             topic,
+		NumPartitions:     1,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err, fmt.Sprintf("create topic %q", topic))
+}
+
 func TestKafkaSource_ReadsMessages(t *testing.T) {
 	addr := kafkaAddr(t)
 	topic := "drift-test-source-" + t.Name()
+	ensureTopic(t, addr, topic)
 
 	// Pre-seed the topic with two records via the low-level writer.
 	w := &kafka.Writer{
-		Addr:                   kafka.TCP(addr),
-		Topic:                  topic,
-		AllowAutoTopicCreation: true,
+		Addr:  kafka.TCP(addr),
+		Topic: topic,
 	}
 	records := []core.Record{
 		{Payload: map[string]any{"n": float64(1)}},
@@ -71,11 +90,11 @@ func TestKafkaSource_ReadsMessages(t *testing.T) {
 func TestKafkaSource_SkipsMalformedMessages(t *testing.T) {
 	addr := kafkaAddr(t)
 	topic := "drift-test-malformed-" + t.Name()
+	ensureTopic(t, addr, topic)
 
 	w := &kafka.Writer{
-		Addr:                   kafka.TCP(addr),
-		Topic:                  topic,
-		AllowAutoTopicCreation: true,
+		Addr:  kafka.TCP(addr),
+		Topic: topic,
 	}
 	// One bad message, one good message.
 	w.WriteMessages(context.Background(), //nolint:errcheck

@@ -3,6 +3,7 @@ package sink
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -22,9 +23,27 @@ func kafkaAddr(t *testing.T) string {
 	return addr
 }
 
+// ensureTopic creates a topic via the broker (which is also the controller in
+// single-node KRaft mode). This is necessary because auto-topic-creation on
+// the broker is not guaranteed in all environments.
+func ensureTopic(t *testing.T, addr, topic string) {
+	t.Helper()
+	conn, err := kafka.Dial("tcp", addr)
+	require.NoError(t, err)
+	defer conn.Close() //nolint:errcheck
+
+	err = conn.CreateTopics(kafka.TopicConfig{
+		Topic:             topic,
+		NumPartitions:     1,
+		ReplicationFactor: 1,
+	})
+	require.NoError(t, err, fmt.Sprintf("create topic %q", topic))
+}
+
 func TestKafkaSink_WritesRecords(t *testing.T) {
 	addr := kafkaAddr(t)
 	topic := "drift-test-sink-" + t.Name()
+	ensureTopic(t, addr, topic)
 
 	snk, err := NewKafka(KafkaConfig{
 		Brokers: []string{addr},
