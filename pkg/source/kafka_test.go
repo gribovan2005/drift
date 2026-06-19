@@ -24,9 +24,9 @@ func kafkaAddr(t *testing.T) string {
 	return addr
 }
 
-// ensureTopic creates a topic and blocks until it appears in broker metadata.
-// CreateTopics returns before the broker fully applies the change; polling
-// ReadPartitions on a fresh connection gives us a definitive ready signal.
+// ensureTopic creates a topic and blocks until its partition leader is ready
+// to accept writes. Metadata appearing in ReadPartitions is not enough —
+// in KRaft the partition leader election may lag behind the metadata update.
 func ensureTopic(t *testing.T, addr, topic string) {
 	t.Helper()
 
@@ -40,27 +40,19 @@ func ensureTopic(t *testing.T, addr, topic string) {
 	conn.Close() //nolint:errcheck
 	require.NoError(t, err, fmt.Sprintf("create topic %q", topic))
 
-	// Poll until our specific topic appears in broker metadata.
-	// ReadPartitions returns ALL topics in the response, so we must filter by name.
+	// Poll until DialLeader succeeds — that proves the partition is writable.
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := kafka.Dial("tcp", addr)
-		if err != nil {
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		parts, err := c.ReadPartitions(topic)
-		c.Close() //nolint:errcheck
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		lc, err := kafka.DialLeader(ctx, "tcp", addr, topic, 0)
+		cancel()
 		if err == nil {
-			for _, p := range parts {
-				if p.Topic == topic {
-					return
-				}
-			}
+			lc.Close() //nolint:errcheck
+			return
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("topic %q did not become available within deadline", topic)
+	t.Fatalf("partition leader for topic %q not ready within deadline", topic)
 }
 
 func TestKafkaSource_ReadsMessages(t *testing.T) {
