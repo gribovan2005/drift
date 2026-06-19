@@ -96,11 +96,9 @@ func TestKafkaSource_SkipsMalformedMessages(t *testing.T) {
 		Addr:  kafka.TCP(addr),
 		Topic: topic,
 	}
-	// One bad message, one good message.
-	w.WriteMessages(context.Background(), //nolint:errcheck
-		kafka.Message{Value: []byte("not-json")},
-		kafka.Message{Value: func() []byte { b, _ := json.Marshal(core.Record{Payload: map[string]any{"ok": true}}); return b }()},
-	)
+	goodBody, _ := json.Marshal(core.Record{Payload: map[string]any{"ok": true}})
+	require.NoError(t, w.WriteMessages(context.Background(), kafka.Message{Value: []byte("not-json")}))
+	require.NoError(t, w.WriteMessages(context.Background(), kafka.Message{Value: goodBody}))
 	w.Close() //nolint:errcheck
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
