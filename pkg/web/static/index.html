@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drift — Pipeline Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+
+    <header class="header">
+      <div class="header-brand">
+        <span class="wordmark">drift</span>
+        <span class="live-dot" id="live-dot" title="Connected"></span>
+      </div>
+      <div class="header-graph">
+        <svg id="graph-canvas" xmlns="http://www.w3.org/2000/svg" aria-label="Pipeline topology"></svg>
+      </div>
+      <div class="header-meta">
+        <span class="clock" id="clock">—</span>
+      </div>
+    </header>
+
+    <div class="body">
+
+      <main class="stages-panel" aria-label="Stage metrics">
+        <p class="panel-eyebrow">stages</p>
+        <div class="stages-grid" id="stages-grid"></div>
+      </main>
+
+      <aside class="sidebar" aria-label="Schema and AI analysis">
+
+        <section class="schema-pane">
+          <p class="panel-eyebrow">schema evolution</p>
+          <div class="schema-body" id="schema-list">
+            <span class="placeholder-text">Loading…</span>
+          </div>
+        </section>
+
+        <section class="ai-pane">
+          <p class="panel-eyebrow">ai analysis</p>
+          <div class="ai-body">
+            <button id="explain-btn" type="button">analyse pipeline</button>
+            <div id="ai-output" aria-live="polite">
+              <span class="placeholder-text">
+                Click <em>analyse pipeline</em> to ask Claude what's happening right now.
+                Requires <code>ANTHROPIC_API_KEY</code>.
+              </span>
+            </div>
+          </div>
+        </section>
+
+      </aside>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

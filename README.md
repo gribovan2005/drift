@@ -42,7 +42,7 @@ go build ./cmd/demo
 # → http://localhost:8080
 
 # With AI debugging
-ANTHROPIC_API_KEY=sk-ant-... ./demo
+GEMINI_API_KEY=AIza... ./demo
 # → click "Ask Claude" in the UI
 ```
 
@@ -122,7 +122,7 @@ reg.Register(v2)  // → adapter.OnSchemaChange(v2) called automatically
 The AI Debugger collects a snapshot of pipeline metrics (throughput, latency p50/p99, queue depth, error count per stage) and asks Claude to identify bottlenecks and suggest concrete fixes — including a Go config snippet.
 
 ```go
-dbg := ai.New("", "")  // reads ANTHROPIC_API_KEY from env
+dbg := ai.New("", "")  // reads GEMINI_API_KEY from env
 explanation, err := dbg.Explain(ctx, p.Snapshot(), p.Graph())
 ```
 

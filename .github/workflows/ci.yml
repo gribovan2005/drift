@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "dev/**"]
+  pull_request:
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (race detector)
+        run: go test -race -timeout 120s ./...
+
+      - name: Throughput regression gate
+        run: go test -v -timeout 60s ./tests/bench/... -run 'TestPipelineThroughputFloor|TestWindowThroughputFloor'
+
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run benchmarks
+        run: go test -bench=. -benchmem -count=3 -timeout 300s ./tests/bench/... | tee bench_current.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ github.sha }}
+          path: bench_current.txt
+          retention-days: 90
+
+      - name: Download previous benchmark (main)
+        if: github.event_name == 'pull_request'
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          branch: ${{ github.base_ref }}
+          name: bench-results-${{ github.event.pull_request.base.sha }}
+          path: bench_previous
+        continue-on-error: true   # first PR against main won't have a baseline
+
+      - name: Compare benchmarks (benchstat)
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ -f bench_previous/bench_current.txt ]; then
+            go install golang.org/x/perf/cmd/benchstat@latest
+            benchstat bench_previous/bench_current.txt bench_current.txt
+          else
+            echo "No previous benchmark available for comparison (first run or baseline missing)."
+          fi
+
+  kafka-integration:
+    name: Kafka Integration
+    runs-on: ubuntu-latest
+    services:
+      kafka:
+        image: confluentinc/cp-kafka:7.6.0
+        ports:
+          - 9092:9092
+        env:
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+          CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+        options: >-
+          --health-cmd "kafka-broker-api-versions --bootstrap-server localhost:9092"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Kafka integration tests
+        env:
+          KAFKA_ADDR: localhost:9092
+        run: go test -v -timeout 120s ./pkg/source/... ./pkg/sink/... -run 'TestKafka'
