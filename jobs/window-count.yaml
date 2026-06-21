@@ -1,0 +1,13 @@
+name: window-count
+source:
+    type: generator
+    fields:
+        id: seq
+    rate: 2ms
+stages:
+    - label: count
+      op: tumbling
+      agg: count
+      size: 50
+sink:
+    type: memory

@@ -13,24 +13,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// stubServer mimics the Anthropic Messages API, returning a single text block.
 func stubServer(t *testing.T, responseText string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		assert.Equal(t, "test-key", r.Header.Get("x-api-key"))
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"candidates": []map[string]any{
-				{
-					"content": map[string]any{
-						"parts": []map[string]string{
-							{"text": responseText},
-						},
-						"role": "model",
-					},
-				},
+			"id":            "msg_test",
+			"type":          "message",
+			"role":          "assistant",
+			"model":         "claude-opus-4-8",
+			"stop_reason":   "end_turn",
+			"stop_sequence": nil,
+			"content": []map[string]any{
+				{"type": "text", "text": responseText},
 			},
+			"usage": map[string]any{"input_tokens": 10, "output_tokens": 20},
 		})
 	}))
 }
@@ -60,13 +62,32 @@ func sampleSnapshot() metrics.MetricsSnapshot {
 	}
 }
 
+func TestDebugger_Ask_ReturnsAIText(t *testing.T) {
+	want := "A tumbling window groups every N records and emits one aggregate."
+	srv := stubServer(t, want)
+	defer srv.Close()
+
+	d := New("test-key", "")
+	d.baseURL = srv.URL
+
+	got, err := d.Ask(context.Background(), "operator: tumbling", "", "Configured params: {\"size\":50}")
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+func TestDebugger_Ask_NoAPIKey(t *testing.T) {
+	d := &Debugger{model: defaultModel, baseURL: "http://unused"}
+	_, err := d.Ask(context.Background(), "metric: p99", "", "")
+	require.Error(t, err)
+}
+
 func TestDebugger_Explain_ReturnsAIText(t *testing.T) {
 	want := "The map stage is the bottleneck — high p99 latency of 40ms."
 	srv := stubServer(t, want)
 	defer srv.Close()
 
 	d := New("test-key", "")
-	d.endpoint = srv.URL // point at mock
+	d.baseURL = srv.URL // point at mock
 
 	graph := []GraphNode{
 		{Label: "filter", Next: []string{"map"}},
@@ -79,9 +100,9 @@ func TestDebugger_Explain_ReturnsAIText(t *testing.T) {
 }
 
 func TestDebugger_Explain_NoAPIKey(t *testing.T) {
-	d := &Debugger{model: defaultModel, endpoint: "http://unused"}
+	d := &Debugger{model: defaultModel, baseURL: "http://unused"}
 	_, err := d.Explain(context.Background(), metrics.MetricsSnapshot{}, nil)
-	assert.ErrorContains(t, err, "GEMINI_API_KEY")
+	assert.ErrorContains(t, err, "ANTHROPIC_API_KEY")
 }
 
 func TestDebugger_Explain_APIError(t *testing.T) {
@@ -91,7 +112,7 @@ func TestDebugger_Explain_APIError(t *testing.T) {
 	defer srv.Close()
 
 	d := New("test-key", "")
-	d.endpoint = srv.URL
+	d.baseURL = srv.URL
 
 	_, err := d.Explain(context.Background(), sampleSnapshot(), nil)
 	assert.ErrorContains(t, err, "429")
@@ -108,7 +129,7 @@ func TestDebugger_Explain_ContextCancelled(t *testing.T) {
 	cancel() // cancel immediately
 
 	d := New("test-key", "")
-	d.endpoint = srv.URL
+	d.baseURL = srv.URL
 
 	_, err := d.Explain(ctx, sampleSnapshot(), nil)
 	assert.Error(t, err)

@@ -20,6 +20,10 @@ type Record struct {
     SchemaID      string
     SchemaVersion int
     Payload       map[string]any
+    EventTime     time.Time // when the event occurred (zero = unset)
+    ID            string    // unique instance id for lineage (empty = lineage off)
+    Parents       []string  // ids this record was derived from (empty for roots)
+    DeliveryKey   string    // stable across replays for exactly-once (empty = EOS off)
 }
 ```
 
@@ -27,6 +31,33 @@ type Record struct {
 - `SchemaID` must match a registered schema in [[Schema Evolution|SchemaRegistry]]
 - `SchemaVersion` is the version at the time the record was produced
 - Records in-flight may have an older `SchemaVersion` than the current schema — operators must handle this
+- `EventTime` is the **event time** (when the event happened at the source), distinct from processing time (when Drift sees it). Zero value means unset — populate it with [[Operators#TimestampAssigner|TimestampAssigner]] before any event-time window. Event-time operators ignore records whose `EventTime` is zero only if documented; otherwise a zero time sorts before all real events.
+- `ID`/`Parents` carry record-level provenance and are populated only when lineage is enabled (`pipeline.WithLineage`); otherwise they stay empty with zero overhead. See [[Lineage]].
+- `DeliveryKey` is a replay-stable identifier for exactly-once delivery — set by the WAL source (`wal:<LSN>`), read by the idempotent sink to dedup replayed records. Empty when exactly-once is off, zero overhead. See [[Exactly-Once]].
+
+---
+
+## Watermarks (event time)
+
+A **watermark** is a monotonic estimate of "event-time progress": a claim that no
+record with `EventTime` ≤ watermark will arrive later. Drift uses the standard
+**bounded-out-of-orderness** strategy:
+
+```
+watermark = maxEventTimeSeen − allowedLateness
+```
+
+- `allowedLateness` is the operator's tolerance for out-of-order events.
+- A record is **late** when its window has already closed relative to the current
+  watermark (`windowEnd ≤ watermark`). Late records are dropped and counted.
+- **Single-process model:** the watermark is computed *inside* each event-time
+  operator from the `EventTime`s it observes — there is no separate watermark
+  event threaded through the channels. Because records flow downstream carrying
+  their `EventTime`, each downstream event-time operator recomputes its own
+  watermark. This keeps the DAG executor unchanged.
+- On stream end, `Flush()` advances the watermark to +∞ so all pending windows fire.
+
+See [[Operators#EventTimeWindow|EventTimeWindow]].
 
 ---
 

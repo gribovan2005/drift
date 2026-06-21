@@ -1,0 +1,35 @@
+name: parallel-demo
+source:
+    type: generator
+    rate: 1ms
+    fields:
+        id: rand:int:1:5000
+        amount: rand:int:1:1000
+        region: choice:eu|us|apac
+stages:
+    # Keyed parallelism: dedup sharded by id across 4 cores (correctness kept —
+    # same id always routes to the same shard).
+    - label: dedupe
+      op: dedup
+      key: id
+      window: 1s
+      parallelism: 4
+      next:
+        - enrich
+
+    # Stateless parallelism: map-set spread round-robin across 4 cores.
+    - label: enrich
+      op: map-set
+      field: reviewed
+      value: true
+      parallelism: 4
+      next:
+        - window
+
+    # Global window — single goroutine (cannot be sharded; no partition key).
+    - label: window
+      op: tumbling
+      size: 40
+      agg: sum:amount
+sink:
+    type: memory

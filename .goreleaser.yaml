@@ -1,0 +1,78 @@
+# GoReleaser config for Drift — cross-compiles the CLI, publishes a GitHub
+# Release with prebuilt archives + checksums, and updates the Homebrew tap.
+# Docs: https://goreleaser.com
+version: 2
+
+project_name: drift
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: drift
+    main: ./cmd/drift
+    binary: drift
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: drift
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - BENCHMARKS.md
+      - LICENSE*
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+homebrew_casks:
+  - name: drift
+    # Pushes the generated cask to gribovan2005/homebrew-drift.
+    repository:
+      owner: gribovan2005
+      name: homebrew-drift
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/gribovan2005/drift"
+    description: "Single-binary streaming engine with live schema evolution and an AI debugger"
+    license: "Apache-2.0"
+    # The release binaries are unsigned; strip the quarantine flag on install so
+    # macOS Gatekeeper doesn't block the CLI.
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/drift"]
+          end
+
+release:
+  github:
+    owner: gribovan2005
+    name: drift
+  draft: false
+  prerelease: auto

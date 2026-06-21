@@ -1,0 +1,28 @@
+name: fraud
+
+# Synthetic transaction stream. ${seq} is the record sequence number;
+# the literal value `seq` becomes the numeric sequence.
+source:
+  type: generator
+  rate: 1ms
+  fields:
+    id: "tx-${seq}"
+    amount: seq
+    region: "eu-west"
+
+stages:
+  # Drop small transactions.
+  - label: filter-small
+    op: filter
+    field: amount
+    gte: 10
+    next: [tag]
+
+  # Mark survivors for downstream review.
+  - label: tag
+    op: map-set
+    field: flagged
+    value: true
+
+sink:
+  type: memory

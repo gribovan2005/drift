@@ -2,7 +2,9 @@ package bench
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/andrejgribov/drift/pkg/core"
 	"github.com/andrejgribov/drift/pkg/operator"
@@ -78,6 +80,44 @@ func BenchmarkFilter_ProcessBatch(b *testing.B) {
 	op := operator.NewFilter(func(r core.Record) bool {
 		return r.Payload["v"].(int)%2 == 0
 	})
+	batch := makeBenchRecords(1000)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for range b.N {
+		if _, err := op.Process(batch); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkDedup_AllUnique measures Deduplicate overhead when no records are
+// dropped (best case — only the seen-map insert path).
+func BenchmarkDedup_AllUnique(b *testing.B) {
+	op := operator.NewDeduplicate(func(r core.Record) string {
+		return fmt.Sprintf("%d", r.Payload["v"].(int))
+	}, time.Hour)
+	batch := makeBenchRecords(1000)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for range b.N {
+		// Reset seen map to avoid filling it across iterations.
+		op = operator.NewDeduplicate(func(r core.Record) string {
+			return fmt.Sprintf("%d", r.Payload["v"].(int))
+		}, time.Hour)
+		if _, err := op.Process(batch); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkDedup_AllDuplicates measures Deduplicate overhead when all records
+// are dropped after the first (worst case for drops — measures map lookup path).
+func BenchmarkDedup_AllDuplicates(b *testing.B) {
+	op := operator.NewDeduplicate(func(r core.Record) string { return "x" }, time.Hour)
 	batch := makeBenchRecords(1000)
 
 	b.ResetTimer()

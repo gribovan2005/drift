@@ -1,1 +1,7 @@
 .env
+
+# GoReleaser build output
+dist/
+
+# stray binary built inside the vault folder
+/drift/drift

@@ -1,0 +1,23 @@
+name: transactions
+source:
+    type: generator
+    fields:
+        amount: rand:int:1:500
+        id: seq
+        region: choice:eu|us|apac
+        status: choice:ok|ok|ok|flagged
+    rate: 3ms
+stages:
+    - label: big-only
+      op: filter
+      next:
+        - reviewed
+      cmp: gte
+      field: amount
+      value: 100
+    - label: reviewed
+      op: map-set
+      field: reviewed
+      value: true
+sink:
+    type: memory

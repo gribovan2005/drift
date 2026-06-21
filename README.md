@@ -2,7 +2,14 @@
 
 A streaming data processing engine for Go — with live schema evolution and an AI debugger that explains what's happening in plain language.
 
-```
+## Install
+
+```bash
+# Homebrew (macOS / Linux)
+brew install gribovan2005/drift/drift
+drift version
+
+# or run the demo with Docker
 docker run -p 8080:8080 ghcr.io/andrejgribov/drift-demo
 ```
 
@@ -42,7 +49,7 @@ go build ./cmd/demo
 # → http://localhost:8080
 
 # With AI debugging
-GEMINI_API_KEY=AIza... ./demo
+ANTHROPIC_API_KEY=sk-ant-... ./demo
 # → click "Ask Claude" in the UI
 ```
 
@@ -122,7 +129,7 @@ reg.Register(v2)  // → adapter.OnSchemaChange(v2) called automatically
 The AI Debugger collects a snapshot of pipeline metrics (throughput, latency p50/p99, queue depth, error count per stage) and asks Claude to identify bottlenecks and suggest concrete fixes — including a Go config snippet.
 
 ```go
-dbg := ai.New("", "")  // reads GEMINI_API_KEY from env
+dbg := ai.New("", "")  // reads ANTHROPIC_API_KEY from env
 explanation, err := dbg.Explain(ctx, p.Snapshot(), p.Graph())
 ```
 
@@ -130,16 +137,31 @@ Or via the Web UI: click **"Ask Claude"** in the AI Debugger panel.
 
 ---
 
-## Web UI
+## Web UI & visual builder
 
-The embedded Web UI updates in real time via Server-Sent Events:
+The embedded Web UI has two views, both served by the binary (no build step, no npm —
+a single embedded HTML/JS/CSS bundle).
+
+**Monitor** updates in real time via Server-Sent Events:
 
 - **Pipeline graph** — live topology with queue depth badges and health colouring
-- **Stage cards** — throughput sparklines, p50/p99 latency, error counts
+- **Stage cards** — throughput sparklines, p50/p99 latency, error counts (click a card
+  for an advanced per-stage metrics drawer with pipeline totals + uptime)
 - **Schema Evolution timeline** — version history with field diffs
 - **AI Debugger panel** — on-demand Claude analysis
+- Auto-reconnecting SSE, idle/empty states
 
-No build step, no npm. The UI is a single embedded HTML/JS/CSS bundle served by the binary.
+**Builder** is a drag-and-drop DAG editor backed by a control plane:
+
+```bash
+go run ./cmd/drift serve --jobs-dir ./jobs   # → http://localhost:8080 (Builder tab)
+```
+
+- Drag source / operator / sink blocks onto the canvas, wire operators, configure params
+- **Save → YAML** in the jobs folder, and load a YAML back into the canvas (round-trip)
+- **Run / Stop** pipelines from the UI; the Monitor follows the running pipeline live
+- Built on `job.Catalog()` so the palette always matches the engine's built-ins
+- Set `DRIFT_AUTH_TOKEN` to require a bearer token on the API
 
 ---
 
@@ -154,8 +176,13 @@ pkg/source     — Memory, Generator, HTTP, Kafka
 pkg/sink       — Memory, HTTP, Kafka
 pkg/metrics    — StageMetrics (latency ring buffer, throughput window, queue depth)
 pkg/ai         — AIDebugger (Claude API integration)
-pkg/web        — Embedded Web UI + SSE API server
+pkg/lineage    — Record-level provenance tracker
+pkg/wal        — Write-ahead log + exactly-once coordinator
+pkg/job        — Declarative YAML jobs + operator/source/sink catalog
+pkg/runner     — Control plane: job store (YAML folder) + pipeline runner
+pkg/web        — Embedded Web UI (monitor + builder) + SSE/control-plane API
 cmd/demo       — Demo: payment pipeline with live schema evolution
+cmd/drift      — CLI: run / validate / graph / list / serve
 specs/         — Component specs (read before implementing)
 skills/        — Claude Code workflow templates
 ```
@@ -172,7 +199,7 @@ go run ./cmd/demo                # run demo locally
 
 Before adding a component: write a spec in `specs/`, then implement. See `skills/add-operator.md`.
 
-**Throughput baselines (Apple M3):**
+**Throughput baselines (Apple M3, raw operator `Process`):**
 
 | Workload | Records/sec |
 |---|---|
@@ -181,20 +208,67 @@ Before adding a component: write a spec in `specs/`, then implement. See `skills
 | Map+Filter pipeline | ~2.4M |
 | TumblingWindow pipeline | ~7M |
 
+**Nexmark vs Flink:** Drift implements the **full Nexmark suite (all 23 queries,
+q0–q22)** — stateless, windowed, group-by, top-N, joins, and a file sink. A
+**same-machine** run (Flink 1.18 in Docker on the same laptop) shows the two are
+**comparable per core** on stateless queries (Drift ~1.0–1.5×); Flink scales
+better across cores on one box for a single query. Drift's edge is operational
+(single binary, no JVM/cluster/shuffle), not raw throughput. Full methodology,
+same-iron tables, and the per-query results: [BENCHMARKS.md](BENCHMARKS.md).
+
 ---
 
 ## Roadmap
 
+Single-process production-grade path (Path A) — **complete**:
+
+- [x] True DAG executor (fan-out / fan-in)
+- [x] Event time + watermarks
+- [x] Session windows
+- [x] Persistent state backend (BadgerDB)
+- [x] Exactly-once semantics (WAL + idempotent sink)
+- [x] Record-level lineage
+- [x] CLI + declarative YAML jobs
+- [x] Visual builder + control plane (`drift serve`)
+
+Beyond Path A:
+
 - [ ] Distributed execution (multi-node)
-- [ ] Exactly-once semantics (checkpointing)
-- [ ] Persistent state (RocksDB)
-- [ ] Event time + watermarks
-- [ ] Session windows
 - [ ] SQL layer
+- [ ] More connectors (CDC, object storage)
 
 ---
 
+## Releasing (maintainer)
+
+Releases are automated with [GoReleaser](https://goreleaser.com). Tagging a
+version cross-compiles the CLI for macOS/Linux (amd64 + arm64), publishes a
+GitHub Release with prebuilt archives + checksums, and updates the Homebrew tap.
+
+**One-time setup:**
+
+1. Create a public tap repo **`gribovan2005/homebrew-drift`** (empty is fine).
+2. Create a GitHub Personal Access Token with `repo` scope (classic) or
+   `contents: read/write` on the tap (fine-grained), then add it to **this**
+   repo as an Actions secret named **`HOMEBREW_TAP_GITHUB_TOKEN`**
+   (Settings → Secrets and variables → Actions). The built-in `GITHUB_TOKEN`
+   can't push to a second repo, hence the separate token.
+
+**Cut a release:**
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0       # → .github/workflows/release.yml runs GoReleaser
+```
+
+After the workflow finishes, `brew install gribovan2005/drift/drift` works.
+Dry-run the build locally (no publish) with:
+
+```bash
+goreleaser release --snapshot --clean --skip=publish
+```
+
 ## License
 
-MIT
+Apache-2.0 — see [LICENSE](LICENSE).
 # drift

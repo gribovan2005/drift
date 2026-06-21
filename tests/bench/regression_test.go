@@ -2,6 +2,7 @@ package bench
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -58,6 +59,35 @@ func TestPipelineThroughputFloor(t *testing.T) {
 	t.Logf("throughput: %.0f records/sec (%.2f ms for %d records)", recPerSec, elapsed.Seconds()*1000, n)
 	assert.GreaterOrEqualf(t, recPerSec, float64(minThroughputRecPerSec),
 		"throughput %.0f rec/sec fell below regression floor %d rec/sec", recPerSec, minThroughputRecPerSec)
+}
+
+// TestDedupThroughputFloor asserts minimum throughput for a Deduplicate pipeline.
+const minDedupThroughputRecPerSec = 30_000
+
+func TestDedupThroughputFloor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping throughput floor in -short mode")
+	}
+
+	const n = 50_000
+	records := makeBenchRecords(n)
+	op := operator.NewDeduplicate(func(r core.Record) string {
+		return fmt.Sprintf("%d", r.Payload["v"].(int))
+	}, time.Hour)
+
+	start := time.Now()
+	src := source.NewMemory(records)
+	snk := sink.NewMemory()
+	p := pipeline.New(src, []pipeline.Stage{{Label: "dedup", Op: op}}, snk)
+	if err := p.Run(context.Background()); err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	recPerSec := float64(n) / elapsed.Seconds()
+	t.Logf("dedup throughput: %.0f records/sec", recPerSec)
+	assert.GreaterOrEqualf(t, recPerSec, float64(minDedupThroughputRecPerSec),
+		"dedup throughput %.0f rec/sec fell below floor %d rec/sec", recPerSec, minDedupThroughputRecPerSec)
 }
 
 // TestWindowThroughputFloor asserts minimum throughput for a tumbling window pipeline.

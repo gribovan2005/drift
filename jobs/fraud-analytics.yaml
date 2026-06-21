@@ -1,0 +1,55 @@
+name: fraud-analytics
+source:
+    type: generator
+    fields:
+        amount: rand:int:1:1000
+        id: rand:int:1:4000
+        kind: choice:purchase|purchase|refund|transfer
+        region: choice:eu|us|apac
+    rate: 3ms
+stages:
+    - label: dedupe
+      op: dedup
+      next:
+        - high-value
+        - low-value
+      key: id
+      window: 1s
+    - label: high-value
+      op: filter
+      next:
+        - tag-high
+      cmp: gte
+      field: amount
+      value: 500
+    - label: low-value
+      op: filter
+      next:
+        - tag-low
+      cmp: lte
+      field: amount
+      value: 499
+    - label: tag-high
+      op: map-set
+      next:
+        - rename-region
+      field: tier
+      value: high
+    - label: tag-low
+      op: map-set
+      next:
+        - rename-region
+      field: tier
+      value: low
+    - label: rename-region
+      op: map-rename
+      next:
+        - window
+      from: region
+      to: market
+    - label: window
+      op: tumbling
+      agg: sum:amount
+      size: 40
+sink:
+    type: memory

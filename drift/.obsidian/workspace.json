@@ -4,17 +4,21 @@
     "type": "split",
     "children": [
       {
-        "id": "dcf72c5bb91d2d0a",
+        "id": "ab1da9642956afcc",
         "type": "tabs",
         "children": [
           {
-            "id": "daad9894154be107",
+            "id": "60461cb4d6b2c6c4",
             "type": "leaf",
             "state": {
-              "type": "empty",
-              "state": {},
+              "type": "markdown",
+              "state": {
+                "file": "Specs/Schema Evolution.md",
+                "mode": "source",
+                "source": false
+              },
               "icon": "lucide-file",
-              "title": "Новая вкладка"
+              "title": "Schema Evolution"
             }
           }
         ]
@@ -176,18 +180,27 @@
       "bases:Создать новую базу": false
     }
   },
-  "active": "daad9894154be107",
+  "active": "60461cb4d6b2c6c4",
   "lastOpenFiles": [
-    "Dev/Testing.md",
-    "Dev/Conventions.md",
-    "Dev/Workflow.md",
+    "Specs/Nexmark Coverage.md",
+    "Benchmarks.md",
+    "Specs/Web UI & Builder.md",
+    "Index.md",
+    "drift",
+    "Specs/Control Plane.md",
+    "Index.md.tmp.34769.922fc7225281",
+    "Specs/Exactly-Once.md",
+    "Specs/Lineage.md",
+    "Specs/CLI & Jobs.md",
+    "Architecture/Overview.md",
+    "Specs/Schema Evolution.md",
     "Specs/AI Debugger.md",
+    "Dev/Conventions.md",
+    "Dev/Testing.md",
+    "Dev/Workflow.md",
     "Specs/Sources & Sinks.md",
     "Specs/Operators.md",
-    "Specs/Schema Evolution.md",
     "Architecture/Core Abstractions.md",
-    "Architecture/Overview.md",
-    "Index.md",
     "Dev",
     "Specs",
     "Architecture",

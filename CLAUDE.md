@@ -34,4 +34,4 @@ go test -race ./...         # with race detector (CI default)
 go test -bench=. ./tests/bench/...  # benchmarks
 ```
 
-AI debugging requires `GEMINI_API_KEY` in `.env`.
+AI debugging requires `ANTHROPIC_API_KEY` in `.env`.

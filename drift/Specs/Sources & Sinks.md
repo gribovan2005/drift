@@ -103,6 +103,18 @@ type KafkaConfig struct {
 
 ---
 
+## sink.File
+
+```
+NewFile(path string) *File
+```
+
+- Writes each `core.Record` as one JSON object per line (**NDJSON**) to `path`
+- Buffered; flushes when the input channel closes. Drift's "log to storage" sink
+  (Nexmark q10). See [[Benchmarks]].
+
+---
+
 ## Invariants
 
 1. A Source may connect to **one** Pipeline at a time
@@ -119,8 +131,19 @@ type KafkaConfig struct {
 
 ---
 
+## Exactly-once wrappers
+
+Any `core.Source`/`core.Sink` can be wrapped by the `pkg/wal` coordinator for
+exactly-once delivery: the WAL source appends + replays records, the idempotent
+sink dedups by `DeliveryKey` and acks back to the log. The underlying
+implementations below are unchanged — the wrappers compose around them. See
+[[Exactly-Once]].
+
+---
+
 ## See also
 
 - [[Core Abstractions#Source]]
 - [[Core Abstractions#Sink]]
+- [[Exactly-Once]] — WAL source replay + idempotent sink
 - [[Testing#Integration tests]]

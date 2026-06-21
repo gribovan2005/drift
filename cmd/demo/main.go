@@ -15,6 +15,7 @@ import (
 	"github.com/andrejgribov/drift/internal/dotenv"
 	"github.com/andrejgribov/drift/pkg/ai"
 	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/andrejgribov/drift/pkg/dlq"
 	"github.com/andrejgribov/drift/pkg/operator"
 	"github.com/andrejgribov/drift/pkg/pipeline"
 	"github.com/andrejgribov/drift/pkg/schema"
@@ -55,6 +56,12 @@ func main() {
 	adapter := operator.NewSchemaAdapter(v1, operator.AliasMap{})
 	reg.Subscribe("payment", adapter)
 
+	// Deduplicate: drop repeated tx_id within a 5-second window (double-submit guard).
+	dedup := operator.NewDeduplicate(func(r core.Record) string {
+		id, _ := r.Payload["tx_id"].(string)
+		return id
+	}, 5*time.Second)
+
 	// Window: aggregate per 50 transactions
 	window, _ := operator.NewTumblingWindow(50, func(records []core.Record) (core.Record, error) {
 		totalAmount := 0.0
@@ -77,6 +84,10 @@ func main() {
 				// Flag suspiciously large transactions (>9500) — reject them.
 				return r.Payload["amount"].(float64) <= 9500.0
 			}),
+		},
+		{
+			Label: "dedup",
+			Op:    dedup,
 		},
 		{
 			Label: "schema-adapt",
@@ -115,6 +126,7 @@ func main() {
 		}
 	}, 2*time.Millisecond) // ~500 records/sec
 
+	q := dlq.New()
 	snk := sink.NewMemory()
 	p := pipeline.New(src, stages, snk)
 
@@ -153,14 +165,17 @@ func main() {
 		}
 	}()
 
-	srv := web.New(":8080", p, reg, dbg)
+	srv := web.New(":8080", p, reg, dbg, web.WithDLQ(q))
 
 	fmt.Println("╔══════════════════════════════════════════════╗")
 	fmt.Println("║       Drift Demo — Payment Pipeline          ║")
 	fmt.Println("╠══════════════════════════════════════════════╣")
 	fmt.Println("║  UI      →  http://localhost:8080            ║")
+	fmt.Println("║  DLQ     →  /api/dlq                         ║")
+	fmt.Println("║  Pipeline: fraud-filter → dedup → schema-   ║")
+	fmt.Println("║            adapt → enrich → aggregator       ║")
 	fmt.Println("║  Schema v2 evolution in 30 seconds           ║")
-	fmt.Println("║  AI debug requires GEMINI_API_KEY env var    ║")
+	fmt.Println("║  AI debug requires ANTHROPIC_API_KEY env var ║")
 	fmt.Println("╚══════════════════════════════════════════════╝")
 
 	if err := srv.ListenAndServe(ctx); err != nil {

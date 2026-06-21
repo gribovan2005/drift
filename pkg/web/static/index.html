@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Drift — Pipeline Monitor</title>
+  <title>Drift — Pipeline Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
@@ -17,23 +17,41 @@
         <span class="wordmark">drift</span>
         <span class="live-dot" id="live-dot" title="Connected"></span>
       </div>
+
+      <nav class="header-nav" id="nav">
+        <button type="button" class="nav-btn is-active" data-view="monitor">monitor</button>
+        <button type="button" class="nav-btn" data-view="builder" id="nav-builder" hidden>builder</button>
+      </nav>
+
       <div class="header-graph">
         <svg id="graph-canvas" xmlns="http://www.w3.org/2000/svg" aria-label="Pipeline topology"></svg>
       </div>
+
       <div class="header-meta">
+        <span class="status-pill" id="status-pill" hidden></span>
         <span class="clock" id="clock">—</span>
+        <button type="button" class="icon-btn" id="token-btn" title="Set API token">🔑</button>
       </div>
     </header>
 
-    <div class="body">
+    <div class="reconnect-banner" id="reconnect-banner" hidden>reconnecting…</div>
+
+    <!-- ── Monitor view ──────────────────────────────────────────────────── -->
+    <div class="body view" id="view-monitor">
 
       <main class="stages-panel" aria-label="Stage metrics">
-        <p class="panel-eyebrow">stages</p>
+        <div class="stages-head">
+          <p class="panel-eyebrow">stages</p>
+          <select id="job-select" class="job-select" hidden aria-label="Watched job"></select>
+        </div>
         <div class="stages-grid" id="stages-grid"></div>
+        <div class="empty-state" id="monitor-empty" hidden>
+          <p>No pipeline running.</p>
+          <p class="empty-sub" id="monitor-empty-sub">Open the <strong>Builder</strong> to create and run one.</p>
+        </div>
       </main>
 
       <aside class="sidebar" aria-label="Schema and AI analysis">
-
         <section class="schema-pane">
           <p class="panel-eyebrow">schema evolution</p>
           <div class="schema-body" id="schema-list">
@@ -53,11 +71,67 @@
             </div>
           </div>
         </section>
-
       </aside>
     </div>
+
+    <!-- ── Builder view ──────────────────────────────────────────────────── -->
+    <div class="builder view" id="view-builder" hidden>
+
+      <aside class="palette" aria-label="Block palette">
+        <div class="palette-scroll" id="palette-list">
+          <span class="placeholder-text">Loading palette…</span>
+        </div>
+        <div class="jobs-pane">
+          <p class="panel-eyebrow">saved jobs</p>
+          <div class="jobs-list" id="jobs-list"></div>
+        </div>
+      </aside>
+
+      <section class="canvas-area">
+        <div class="canvas-toolbar">
+          <input type="text" id="job-name" class="job-name-input" placeholder="job-name" autocomplete="off">
+          <button type="button" class="tb-btn" id="btn-new">new</button>
+          <button type="button" class="tb-btn" id="btn-validate">validate</button>
+          <button type="button" class="tb-btn tb-primary" id="btn-save">save</button>
+          <span class="tb-sep"></span>
+          <button type="button" class="tb-btn tb-run" id="btn-run">▶ run</button>
+          <button type="button" class="tb-btn tb-stop" id="btn-stop">■ stop</button>
+          <span class="tb-status" id="builder-status"></span>
+        </div>
+        <div class="canvas-wrap" id="canvas-wrap">
+          <svg class="canvas-edges" id="canvas-edges" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div class="canvas-nodes" id="canvas-nodes"></div>
+          <div class="canvas-hint" id="canvas-hint">Drag blocks from the left to build a pipeline.</div>
+        </div>
+      </section>
+
+      <aside class="inspector" id="inspector" aria-label="Block configuration">
+        <p class="panel-eyebrow">inspector</p>
+        <div class="inspector-body" id="inspector-body">
+          <span class="placeholder-text">Select a block to configure it.</span>
+        </div>
+      </aside>
+    </div>
+
   </div>
 
+  <!-- ── Advanced metrics drawer ─────────────────────────────────────────── -->
+  <div class="drawer-scrim" id="drawer-scrim" hidden></div>
+  <aside class="drawer" id="metrics-drawer" hidden aria-label="Advanced metrics">
+    <div class="drawer-head">
+      <span id="drawer-title">stage</span>
+      <button type="button" class="icon-btn" id="drawer-close">✕</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <div class="toast-stack" id="toast-stack"></div>
+
+  <script src="api.js"></script>
+  <script src="monitor.js"></script>
+  <script src="help.js"></script>
+  <script src="palette.js"></script>
+  <script src="builder.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

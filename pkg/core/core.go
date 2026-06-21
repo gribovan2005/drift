@@ -1,6 +1,9 @@
 package core
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // FieldType describes the allowed types for schema fields.
 type FieldType string
@@ -45,6 +48,26 @@ type Record struct {
 	SchemaID      string
 	SchemaVersion int
 	Payload       map[string]any
+
+	// EventTime is when the event occurred at the source (event time), as
+	// opposed to when Drift processed it (processing time). The zero value
+	// means unset; populate it with operator.TimestampAssigner before any
+	// event-time window. Event-time operators derive their watermark from it.
+	EventTime time.Time
+
+	// ID uniquely identifies this record instance for lineage tracking. It is
+	// minted per stage by the lineage tracker; empty when lineage is disabled.
+	ID string
+
+	// Parents holds the IDs of the records this one was derived from. Empty for
+	// source (root) records and when lineage is disabled. See pkg/lineage.
+	Parents []string
+
+	// DeliveryKey is a stable identifier used for exactly-once delivery: it is
+	// identical when a record is replayed from the write-ahead log, so an
+	// idempotent sink can recognise and skip duplicates. Set by the WAL source
+	// (wal:<LSN>); empty when exactly-once is disabled. See pkg/wal.
+	DeliveryKey string
 }
 
 // Operator transforms a batch of Records. Implementations must be safe

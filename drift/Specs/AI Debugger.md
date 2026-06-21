@@ -8,7 +8,7 @@ tested: true
 
 # AI Debugger
 
-On-demand pipeline diagnosis. Collects a metrics snapshot + graph, sends to Gemini, returns a structured plain-language explanation.
+On-demand pipeline diagnosis. Collects a metrics snapshot + graph, sends to Claude, returns a structured plain-language explanation.
 
 **This is a developer/ops tool — not in the data path.**
 
@@ -18,11 +18,19 @@ On-demand pipeline diagnosis. Collects a metrics snapshot + graph, sends to Gemi
 
 ```go
 func New(apiKey, model string) *Debugger
-// apiKey: reads GEMINI_API_KEY from env if empty
-// model: defaults to "gemini-2.5-flash"
+// apiKey: reads ANTHROPIC_API_KEY from env if empty
+// model: defaults to "claude-haiku-4-5" (fast + cheap; pass "claude-opus-4-8" for deeper analysis)
 
 func (d *Debugger) Explain(ctx context.Context, snap metrics.MetricsSnapshot, graph []GraphNode) (string, error)
+
+// Ask answers a focused question about one UI element (operator/source/sink/
+// param/metric). subject names it, context is optional config or live metric
+// values, question defaults when empty. Powers the UI's click-to-explain help
+// (POST /api/ask). Short answer (<90 words), own concise system prompt.
+func (d *Debugger) Ask(ctx context.Context, subject, question, context string) (string, error)
 ```
+
+Uses the official Anthropic Go SDK (`github.com/anthropics/anthropic-sdk-go`).
 
 ---
 
@@ -49,7 +57,9 @@ type OperatorMetrics struct {
 
 ## Prompt structure
 
-The prompt instructs Gemini to respond in exactly this format:
+Fixed instructions live in the **system prompt** (cached via `CacheControl`); the
+variable graph + metrics payload is sent as the **user message**. Claude responds
+in exactly this format:
 
 ```
 ## Root Cause
@@ -71,11 +81,15 @@ Go code snippet if structural change needed (omit if not applicable)
 
 ## API details
 
-- Endpoint: `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}`
-- Request: `{ contents: [{parts: [{text: prompt}]}], generationConfig: {maxOutputTokens: 1024} }`
-- Response: `candidates[0].content.parts[0].text`
+- SDK: `client.Messages.New(ctx, MessageNewParams{...})` via `github.com/anthropics/anthropic-sdk-go`
+- Model: `anthropic.ModelClaudeHaiku4_5` (default, cheap/fast), `MaxTokens: 4096`
+- No extended thinking — Haiku 4.5 is pre-4.6 (adaptive thinking is 4.6+ only), and a 300-word structured diagnosis doesn't need it. Pass an Opus model via `New` if deeper reasoning is wanted.
+- System prompt cached with `CacheControl: NewCacheControlEphemeralParam()`
+- `MaxRetries: 0` — on-demand debug call fails fast rather than blocking the UI
+- Refusal handling: `StopReasonRefusal` → returns an error with the refusal category
+- Response: concatenates all `TextBlock` content (thinking blocks skipped)
 
-The `endpoint` field is overridable for tests (point at `httptest.Server`).
+The `baseURL` field is overridable for tests (point at `httptest.Server` via `option.WithBaseURL`).
 
 ---
 
@@ -83,8 +97,8 @@ The `endpoint` field is overridable for tests (point at `httptest.Server`).
 
 | Env var | Default | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | required | Google AI API key |
-| `DRIFT_AI_MODEL` | `gemini-2.5-flash` | Model to use |
+| `ANTHROPIC_API_KEY` | required | Anthropic API key |
+| `DRIFT_AI_MODEL` | `claude-haiku-4-5` | Model to use |
 
 Loaded automatically from `.env` file at startup via `internal/dotenv`.
 
@@ -103,12 +117,14 @@ Loaded automatically from `.env` file at startup via `internal/dotenv`.
 
 | Test | What it proves |
 |---|---|
-| `TestDebugger_Explain_ReturnsAIText` | Parses Gemini response correctly |
+| `TestDebugger_Explain_ReturnsAIText` | Parses Claude response correctly |
 | `TestDebugger_Explain_NoAPIKey` | Returns clear error when key missing |
 | `TestDebugger_Explain_APIError` | Propagates HTTP error codes |
 | `TestDebugger_Explain_ContextCancelled` | Respects context cancellation |
+| `TestDebugger_Ask_ReturnsAIText` | Element-scoped Ask parses the response |
+| `TestDebugger_Ask_NoAPIKey` | Ask returns a clear error when key missing |
 
-All tests use `httptest.Server` — no real API calls in CI.
+All tests use `httptest.Server` (via `option.WithBaseURL`) — no real API calls in CI.
 
 ---
 

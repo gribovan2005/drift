@@ -39,7 +39,7 @@ func (w *TumblingWindow) Process(in []core.Record) ([]core.Record, error) {
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, agg)
+			out = append(out, withParents(agg, w.buf))
 			w.buf = w.buf[:0]
 		}
 	}
@@ -56,6 +56,7 @@ func (w *TumblingWindow) Flush() ([]core.Record, error) {
 	if err != nil {
 		return nil, err
 	}
+	agg = withParents(agg, w.buf)
 	w.buf = w.buf[:0]
 	return []core.Record{agg}, nil
 }
@@ -125,7 +126,7 @@ func (w *SlidingWindow) Process(in []core.Record) ([]core.Record, error) {
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, agg)
+			out = append(out, withParents(agg, w.buf))
 			w.count = 0
 		}
 	}
@@ -142,6 +143,7 @@ func (w *SlidingWindow) Flush() ([]core.Record, error) {
 	if err != nil {
 		return nil, err
 	}
+	agg = withParents(agg, w.buf)
 	w.count = 0
 	return []core.Record{agg}, nil
 }

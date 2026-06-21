@@ -8,7 +8,7 @@ Streaming data processing engine for Go. Single binary, zero external dependenci
 
 **Two differentiators vs Flink:**
 1. [[Schema Evolution]] — operators adapt to schema changes without pipeline restart
-2. [[AI Debugger]] — Gemini explains bottlenecks in plain language; not in the data path
+2. [[AI Debugger]] — Claude explains bottlenecks in plain language; not in the data path
 
 ---
 
@@ -22,7 +22,18 @@ Streaming data processing engine for Go. Single binary, zero external dependenci
 - [[Schema Evolution]] — live schema propagation contract
 - [[Operators]] — Map, Filter, FlatMap, SchemaAdapter, TumblingWindow, SlidingWindow
 - [[Sources & Sinks]] — Memory, HTTP, Kafka
-- [[AI Debugger]] — metrics → Gemini → plain-language diagnosis
+- [[AI Debugger]] — metrics → Claude → plain-language diagnosis
+- [[CLI & Jobs]] — declarative YAML jobs + operator registry, `drift run/validate/graph/list`
+- [[Lineage]] — record-level provenance (`Record.ID`/`Parents`, `pipeline.WithLineage`)
+- [[Exactly-Once]] — WAL source replay + idempotent sink (`pkg/wal`, `Record.DeliveryKey`)
+- [[Control Plane]] — runner + job store: build/save/run pipelines at runtime (`pkg/runner`, `drift serve`)
+- [[Web UI & Builder]] — visual DAG builder + hardened dashboard (`pkg/web`)
+- [[Nexmark Coverage]] — plan to implement all Nexmark queries q0–q22
+- [[Distribution]] — Homebrew install via GoReleaser + tap (`.goreleaser.yaml`, `drift version`)
+
+## Benchmarks
+
+- [[Benchmarks]] — Nexmark vs Flink results + caveats (`tests/nexmark`, `BENCHMARKS.md`)
 
 ## Development
 
@@ -39,12 +50,17 @@ Streaming data processing engine for Go. Single binary, zero external dependenci
 | `pkg/core` | Interfaces only | — |
 | `pkg/schema` | SchemaRegistry | core |
 | `pkg/operator` | Built-in operators | core |
-| `pkg/pipeline` | DAG executor | core, metrics |
+| `pkg/pipeline` | DAG executor | core, metrics, lineage |
+| `pkg/lineage` | Record-level provenance tracker + operator decorator | core |
+| `pkg/wal` | Write-ahead log + exactly-once coordinator (source/sink wrappers) | core, checkpoint |
+| `pkg/runner` | Control plane: job store (YAML folder) + pipeline runner | job, pipeline, schema, dlq |
 | `pkg/source` | Source implementations | core |
 | `pkg/sink` | Sink implementations | core |
 | `pkg/metrics` | OperatorMetrics | core |
-| `pkg/ai` | Gemini debugger | metrics, core |
-| `pkg/web` | SSE server + embedded UI | pipeline, ai, schema |
-| `cmd/demo` | Demo CLI | all |
+| `pkg/ai` | Claude debugger | metrics, core |
+| `pkg/web` | SSE server + embedded UI + builder/control-plane API | pipeline, ai, schema, runner, job, dlq |
+| `pkg/job` | YAML job spec + operator/source/sink registry + loader | core, operator, source, sink, pipeline |
+| `cmd/drift` | CLI: run/validate/graph/list/serve | all |
+| `cmd/demo` | Demo pipeline + web UI | all |
 
 **Import rule**: `pkg/core` must never import other `pkg/` packages.

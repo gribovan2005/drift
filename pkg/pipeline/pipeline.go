@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/andrejgribov/drift/pkg/checkpoint"
 	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/andrejgribov/drift/pkg/lineage"
 	"github.com/andrejgribov/drift/pkg/metrics"
 )
 
@@ -15,13 +17,16 @@ const defaultBatchSize = 64
 const defaultChannelBuf = 256
 
 // Stage wraps an Operator with its label and channel buffer size.
+// Next lists downstream stage labels for DAG wiring. When empty,
+// the pipeline fills it in linearly (next stage in slice order, or sink).
 type Stage struct {
 	Label   string
 	Op      core.Operator
-	BufSize int // 0 → defaultChannelBuf
+	BufSize int      // 0 → defaultChannelBuf
+	Next    []string // downstream stage labels; nil = linear order
 }
 
-// GraphNode describes one stage in the pipeline DAG.
+// GraphNode describes one node in the pipeline DAG.
 type GraphNode struct {
 	Label string
 	Next  []string // labels of direct downstream stages; empty for the last stage
@@ -31,18 +36,28 @@ type GraphNode struct {
 type Option func(*Pipeline)
 
 // WithLogger sets the structured logger used by the pipeline.
-// Defaults to slog.Default() if not provided.
 func WithLogger(l *slog.Logger) Option {
 	return func(p *Pipeline) { p.logger = l }
 }
 
-// WithCheckpoint enables operator state persistence. On startup the pipeline
-// restores any saved state; on clean shutdown it saves current state.
+// WithCheckpoint enables operator state persistence.
 func WithCheckpoint(store checkpoint.Store) Option {
 	return func(p *Pipeline) { p.checkpoint = store }
 }
 
-// Pipeline connects a Source through a chain of Stages to a Sink.
+// WithLineage enables record-level provenance tracking. Each stage operator is
+// wrapped so that records are assigned IDs and their parentage is recorded in t.
+// The wrapping preserves each operator's Flusher/Snapshottable behaviour, so
+// windowing and checkpointing are unaffected. See pkg/lineage.
+func WithLineage(t *lineage.Tracker) Option {
+	return func(p *Pipeline) {
+		for i := range p.stages {
+			p.stages[i].Op = t.Wrap(p.stages[i].Label, p.stages[i].Op)
+		}
+	}
+}
+
+// Pipeline connects a Source through a DAG of Stages to a Sink.
 // Each stage runs in its own goroutine and communicates via buffered channels.
 // Metrics are collected automatically for every stage.
 type Pipeline struct {
@@ -53,10 +68,10 @@ type Pipeline struct {
 	stageM     []*metrics.StageMetrics
 	logger     *slog.Logger
 	checkpoint checkpoint.Store
+	tap        *Tap // optional; captures recent per-stage output records
 }
 
-// New creates a Pipeline. Stages are executed in order; source feeds the
-// first stage and the last stage feeds the sink.
+// New creates a Pipeline. When Stage.Next is unset, stages run in slice order.
 func New(source core.Source, stages []Stage, sink core.Sink, opts ...Option) *Pipeline {
 	sm := make([]*metrics.StageMetrics, len(stages))
 	for i, s := range stages {
@@ -85,20 +100,17 @@ func (p *Pipeline) Snapshot() metrics.MetricsSnapshot {
 	return snap
 }
 
-// Graph returns a linear DAG description of the pipeline.
+// Graph returns the pipeline DAG, reflecting actual Next wiring.
 func (p *Pipeline) Graph() []GraphNode {
-	nodes := make([]GraphNode, len(p.stages))
-	for i, s := range p.stages {
-		nodes[i] = GraphNode{Label: s.Label}
-		if i+1 < len(p.stages) {
-			nodes[i].Next = []string{p.stages[i+1].Label}
-		}
+	stages := p.resolveNext()
+	nodes := make([]GraphNode, len(stages))
+	for i, s := range stages {
+		nodes[i] = GraphNode{Label: s.Label, Next: s.Next}
 	}
 	return nodes
 }
 
 // IsReady reports whether any stage has processed at least one record.
-// Used by the /readyz health endpoint.
 func (p *Pipeline) IsReady() bool {
 	for _, m := range p.stageM {
 		if m.Snapshot().ProcessedTotal > 0 {
@@ -109,8 +121,6 @@ func (p *Pipeline) IsReady() bool {
 }
 
 // Run starts the pipeline and blocks until completion or ctx cancellation.
-// If any stage returns an error the pipeline is cancelled and the error is
-// returned.
 func (p *Pipeline) Run(ctx context.Context) error {
 	start := time.Now()
 	log := p.logger.With("component", "pipeline")
@@ -127,35 +137,117 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		return fmt.Errorf("source: %w", err)
 	}
 
-	ch := srcCh
-	errChs := make([]<-chan error, len(p.stages))
+	stages := p.resolveNext()
+	pred := buildPredMap(stages)
 
-	for i, stage := range p.stages {
-		buf := stage.BufSize
-		if buf == 0 {
-			buf = defaultChannelBuf
+	// ── Build per-edge channels ───────────────────────────────────────────
+	// edgeKey{from, to}: one buffered channel per directed edge.
+	// Special labels: "source" (upstream of root stages), "sink" (downstream
+	// of terminal stages).
+	type edgeKey struct{ from, to string }
+	edges := map[edgeKey]chan core.Record{}
+
+	bufFor := func(label string) int {
+		for _, s := range stages {
+			if s.Label == label && s.BufSize > 0 {
+				return s.BufSize
+			}
 		}
-		inCh := ch
-		outCh := make(chan core.Record, buf)
+		return defaultChannelBuf
+	}
+
+	for _, s := range stages {
+		if len(pred[s.Label]) == 0 {
+			edges[edgeKey{"source", s.Label}] = make(chan core.Record, bufFor(s.Label))
+		}
+		for _, next := range s.Next {
+			edges[edgeKey{s.Label, next}] = make(chan core.Record, bufFor(next))
+		}
+		if len(s.Next) == 0 {
+			edges[edgeKey{s.Label, "sink"}] = make(chan core.Record, defaultChannelBuf)
+		}
+	}
+
+	// ── Wire source → root stages ─────────────────────────────────────────
+	roots := rootLabels(stages, pred)
+	rootDsts := make([]chan core.Record, len(roots))
+	for i, r := range roots {
+		rootDsts[i] = edges[edgeKey{"source", r}]
+	}
+	go broadcastAll(ctx, srcCh, rootDsts)
+
+	// ── Per-stage output channel (stage goroutine writes here) ────────────
+	stageOut := make(map[string]chan core.Record, len(stages))
+	for _, s := range stages {
+		stageOut[s.Label] = make(chan core.Record, bufFor(s.Label))
+	}
+
+	// ── Wire stage outputs → downstream edge channels ─────────────────────
+	for _, s := range stages {
+		var dsts []chan core.Record
+		for _, next := range s.Next {
+			dsts = append(dsts, edges[edgeKey{s.Label, next}])
+		}
+		if len(s.Next) == 0 {
+			dsts = []chan core.Record{edges[edgeKey{s.Label, "sink"}]}
+		}
+		go broadcastAll(ctx, stageOut[s.Label], dsts)
+	}
+
+	// ── Build stage input channels (fan-in merger if multiple preds) ──────
+	stageIn := make(map[string]<-chan core.Record, len(stages))
+	for _, s := range stages {
+		var srcs []chan core.Record
+		if ch, ok := edges[edgeKey{"source", s.Label}]; ok {
+			srcs = append(srcs, ch)
+		}
+		for _, pr := range pred[s.Label] {
+			srcs = append(srcs, edges[edgeKey{pr, s.Label}])
+		}
+		if len(srcs) == 1 {
+			stageIn[s.Label] = srcs[0]
+		} else {
+			merged := make(chan core.Record, bufFor(s.Label))
+			go mergeAll(ctx, srcs, merged)
+			stageIn[s.Label] = merged
+		}
+	}
+
+	// ── Collect sink input channels ───────────────────────────────────────
+	var sinkSrcs []chan core.Record
+	for _, s := range stages {
+		if len(s.Next) == 0 {
+			sinkSrcs = append(sinkSrcs, edges[edgeKey{s.Label, "sink"}])
+		}
+	}
+	var sinkIn <-chan core.Record
+	if len(sinkSrcs) == 1 {
+		sinkIn = sinkSrcs[0]
+	} else {
+		merged := make(chan core.Record, defaultChannelBuf)
+		go mergeAll(ctx, sinkSrcs, merged)
+		sinkIn = merged
+	}
+
+	// ── Start stage goroutines ────────────────────────────────────────────
+	errChs := make([]<-chan error, len(stages))
+	for i, stage := range stages {
 		errCh := make(chan error, 1)
 		errChs[i] = errCh
-
-		inChCopy := inCh
-		p.stageM[i].SetQueueLen(func() int64 { return int64(len(inChCopy)) })
-
+		in := stageIn[stage.Label]
+		p.stageM[i].SetQueueLen(func() int64 { return int64(len(in)) })
 		stageLog := log.With("stage", stage.Label)
 		stageLog.Info("stage starting")
-		go runStage(ctx, cancel, stage.Op, inCh, outCh, errCh, p.batchSize, p.stageM[i], stageLog)
-		ch = outCh
+		go runStage(ctx, cancel, stage.Op, in, stageOut[stage.Label], errCh, p.batchSize, p.stageM[i], stageLog, p.tap, stage.Label)
 	}
 
 	sinkErrCh := make(chan error, 1)
-	go func() { sinkErrCh <- p.sink.Write(ctx, ch) }()
+	go func() { sinkErrCh <- p.sink.Write(ctx, sinkIn) }()
 
 	var errs []error
 	for i, errCh := range errChs {
 		if e := <-errCh; e != nil {
-			log.Error("stage error", "stage", p.stages[i].Label, "err", e)
+			log.Error("stage error", "stage", stages[i].Label, "err", e)
 			errs = append(errs, e)
 		}
 	}
@@ -171,6 +263,97 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		return fmt.Errorf("pipeline errors: %v", errs)
 	}
 	return nil
+}
+
+// resolveNext returns a copy of p.stages with linear Next filled in for
+// any stage that didn't set it explicitly.
+func (p *Pipeline) resolveNext() []Stage {
+	stages := make([]Stage, len(p.stages))
+	copy(stages, p.stages)
+	for i := range stages {
+		if len(stages[i].Next) == 0 && i+1 < len(stages) {
+			stages[i].Next = []string{stages[i+1].Label}
+		}
+	}
+	return stages
+}
+
+// buildPredMap returns label → list of predecessor labels.
+func buildPredMap(stages []Stage) map[string][]string {
+	pred := map[string][]string{}
+	for _, s := range stages {
+		for _, next := range s.Next {
+			pred[next] = append(pred[next], s.Label)
+		}
+	}
+	return pred
+}
+
+// rootLabels returns labels of stages with no predecessors.
+func rootLabels(stages []Stage, pred map[string][]string) []string {
+	var roots []string
+	for _, s := range stages {
+		if len(pred[s.Label]) == 0 {
+			roots = append(roots, s.Label)
+		}
+	}
+	return roots
+}
+
+// broadcastAll reads from src and copies each record to every dst.
+// Closes all dsts when src is exhausted or ctx is cancelled.
+func broadcastAll(ctx context.Context, src <-chan core.Record, dsts []chan core.Record) {
+	defer func() {
+		for _, dst := range dsts {
+			close(dst)
+		}
+	}()
+	for {
+		select {
+		case r, ok := <-src:
+			if !ok {
+				return
+			}
+			for _, dst := range dsts {
+				select {
+				case dst <- r:
+				case <-ctx.Done():
+					return
+				}
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// mergeAll reads concurrently from all srcs and writes to dst.
+// Closes dst when all srcs are exhausted or ctx is cancelled.
+func mergeAll(ctx context.Context, srcs []chan core.Record, dst chan core.Record) {
+	var wg sync.WaitGroup
+	for _, src := range srcs {
+		wg.Add(1)
+		go func(ch <-chan core.Record) {
+			defer wg.Done()
+			for {
+				select {
+				case r, ok := <-ch:
+					if !ok {
+						return
+					}
+					select {
+					case dst <- r:
+					case <-ctx.Done():
+						return
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}(src)
+	}
+	wg.Wait()
+	close(dst)
 }
 
 // restoreCheckpoints loads saved state for any Snapshottable stage operators.
@@ -200,7 +383,6 @@ func (p *Pipeline) restoreCheckpoints(log *slog.Logger) {
 }
 
 // saveCheckpoints persists state for any Snapshottable stage operators.
-// Called after all stage goroutines have exited — no concurrent Process calls.
 func (p *Pipeline) saveCheckpoints(log *slog.Logger) {
 	if p.checkpoint == nil {
 		return
@@ -235,6 +417,8 @@ func runStage(
 	batchSize int,
 	sm *metrics.StageMetrics,
 	log *slog.Logger,
+	tap *Tap,
+	label string,
 ) {
 	defer close(out)
 
@@ -254,6 +438,7 @@ func runStage(
 			errCh <- err
 			return false
 		}
+		tap.record(label, result)
 		for _, r := range result {
 			select {
 			case out <- r:
@@ -280,6 +465,7 @@ func runStage(
 						errCh <- err
 						return
 					}
+					tap.record(label, result)
 					for _, r := range result {
 						select {
 						case out <- r:
