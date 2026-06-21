@@ -26,6 +26,9 @@ func TestPipelineThroughputFloor(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping throughput floor in -short mode")
 	}
+	if raceEnabled {
+		t.Skip("skipping throughput floor under -race (instrumentation distorts timing)")
+	}
 
 	const n = 50_000
 	records := makeBenchRecords(n)
@@ -68,6 +71,9 @@ func TestDedupThroughputFloor(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping throughput floor in -short mode")
 	}
+	if raceEnabled {
+		t.Skip("skipping throughput floor under -race (instrumentation distorts timing)")
+	}
 
 	const n = 50_000
 	records := makeBenchRecords(n)
@@ -96,6 +102,9 @@ const minWindowThroughputRecPerSec = 30_000
 func TestWindowThroughputFloor(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping throughput floor in -short mode")
+	}
+	if raceEnabled {
+		t.Skip("skipping throughput floor under -race (instrumentation distorts timing)")
 	}
 
 	const n = 50_000
