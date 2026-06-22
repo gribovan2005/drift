@@ -186,6 +186,33 @@ the row path (see [[Vectorized Fast-Lane]]).
 go test ./tests/bench/ -run VectorVsRow -v -count=1
 ```
 
+### End-to-end with binary decode (`cmd/e2ebench`)
+
+The fairer test: data arrives **as frames** that are **decoded in the hot path**
+(decode counts), like real ingestion. Same `Filter(even)+Map(+1)` over 5M records,
+`GOMAXPROCS=8`:
+
+| config | rows/sec | vs JSON |
+|---|---:|---:|
+| JSON + row (`map[string]any`) | 1.20 M/s | 1.00× |
+| binary + vectorized | 366 M/s | ~306× |
+| parallel(8) binary + vectorized | 433 M/s | ~361× |
+
+→ **JSON decode + `map[string]any` is the wall.** A binary columnar codec makes
+decode negligible (raw byte reads, no parsing), so decode and compute overlap and
+the engine is no longer the bottleneck. The parallel binary source adds ingestion
+headroom; the single vectorized stage goroutine then caps it (~430 M/s) — a
+parallelised stage would push further.
+
+Honest framing: these are **in-process** frames (no network). Over a real broker,
+network/disk bandwidth becomes the cap (38 MB for 5M records ⇒ ~430 M/s needs
+~3 GB/s of wire) — i.e. the bottleneck moves to infrastructure, which is exactly
+where you want it. The result proves Drift's decode+compute is not the limit.
+
+```bash
+go run ./cmd/e2ebench
+```
+
 ---
 
 ## Reproduce

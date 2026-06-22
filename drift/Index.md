@@ -69,5 +69,6 @@ Streaming data processing engine for Go. Single binary, zero external dependenci
 | `cmd/drift` | CLI: run/validate/graph/list/serve | all |
 | `cmd/demo` | Demo pipeline + web UI | all |
 | `cmd/sdkdemo` | SDK demo: real-time analytics embedded in a Go HTTP service (live view + schema evolution + `/metrics`) | sdk, operator, schema |
+| `cmd/e2ebench` | End-to-end throughput demo: JSON+row vs binary+vectorized vs parallel binary+vec | sdk, source, vector |
 
 **Import rule**: `pkg/core` must never import other `pkg/` packages.
