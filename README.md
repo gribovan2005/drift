@@ -58,6 +58,55 @@ After **30 seconds**, schema v2 is published live — watch the Schema Evolution
 
 ---
 
+## Use as a library
+
+Embed Drift directly in a Go service — one import, a fluent builder:
+
+```bash
+go get github.com/gribovan2005/drift/sdk
+```
+
+```go
+import "github.com/gribovan2005/drift/sdk"
+
+out := sdk.Collect()
+err := sdk.New().
+    From(sdk.Slice(in)).                                       // or Kafka/HTTP/Generate
+    Filter(func(r sdk.Record) bool { return r.Payload["v"].(int)%2 == 0 }).
+    Map(func(r sdk.Record) (sdk.Record, error) {
+        r.Payload["v"] = r.Payload["v"].(int) + 1
+        return r, nil
+    }).
+    Tumbling(64, aggregate).                                   // windows, dedup, joins…
+    To(out).                                                   // or Kafka/File/HTTP
+    Run(ctx)
+```
+
+The `sdk` package is a thin facade over `pkg/*`; use `Apply(op)` for any operator
+without a dedicated method, and `Build()` to get the raw `*pipeline.Pipeline` for
+monitoring. See [`drift/Specs/SDK.md`](drift/Specs/SDK.md).
+
+**Observability:** expose per-stage metrics to your existing Prometheus — no agent,
+no cluster:
+
+```go
+p, _ := sdk.New().From(src).Map(fn).To(sink).Build()
+http.Handle("/metrics", sdk.PrometheusHandler(p))   // drift_stage_processed_total, …
+go p.Run(ctx)
+```
+
+**Runnable example** — a real-time payment-analytics service in one file (live
+materialized view over HTTP, live schema evolution, Prometheus metrics):
+
+```bash
+go run ./cmd/sdkdemo
+curl localhost:8090/stats     # live window aggregates, no database
+curl localhost:8090/metrics   # Prometheus scrape
+# at t+15s the schema evolves live — watch "schema_has_risk_score" flip to true
+```
+
+---
+
 ## Core Concepts
 
 ```

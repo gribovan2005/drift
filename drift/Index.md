@@ -22,6 +22,8 @@ Streaming data processing engine for Go. Single binary, zero external dependenci
 - [[Schema Evolution]] — live schema propagation contract
 - [[Operators]] — Map, Filter, FlatMap, SchemaAdapter, TumblingWindow, SlidingWindow
 - [[Sources & Sinks]] — Memory, HTTP, Kafka
+- [[SDK]] — single-import fluent facade for embedding Drift in Go services (subpackage `drift/sdk`)
+- [[Metrics Export]] — Prometheus text exposition over `Snapshot()` (`pkg/metrics`, `sdk.PrometheusHandler`, `GET /metrics`)
 - [[AI Debugger]] — metrics → Claude → plain-language diagnosis
 - [[CLI & Jobs]] — declarative YAML jobs + operator registry, `drift run/validate/graph/list`
 - [[Lineage]] — record-level provenance (`Record.ID`/`Parents`, `pipeline.WithLineage`)
@@ -60,7 +62,9 @@ Streaming data processing engine for Go. Single binary, zero external dependenci
 | `pkg/ai` | Claude debugger | metrics, core |
 | `pkg/web` | SSE server + embedded UI + builder/control-plane API | pipeline, ai, schema, runner, job, dlq |
 | `pkg/job` | YAML job spec + operator/source/sink registry + loader | core, operator, source, sink, pipeline |
+| `sdk` | Fluent SDK facade for embedding | core, operator, source, sink, pipeline, checkpoint, lineage |
 | `cmd/drift` | CLI: run/validate/graph/list/serve | all |
 | `cmd/demo` | Demo pipeline + web UI | all |
+| `cmd/sdkdemo` | SDK demo: real-time analytics embedded in a Go HTTP service (live view + schema evolution + `/metrics`) | sdk, operator, schema |
 
 **Import rule**: `pkg/core` must never import other `pkg/` packages.
