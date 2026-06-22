@@ -113,6 +113,36 @@ func (s *Stream) ApplyLabeled(label string, op Operator) *Stream
   the error on the Stream; the first such error is returned by `Run`/`Build` and
   short-circuits later stage methods (they become no-ops).
 
+### Fan-out (non-linear DAG)
+
+```go
+func (s *Stream) Branch(fns ...func(*Branch)) *Stream  // split into ≥2 sub-chains
+// *Branch mirrors the linear stage methods:
+func (b *Branch) Map/Filter/FlatMap(...) *Branch
+func (b *Branch) Apply(op Operator) *Branch
+func (b *Branch) ApplyLabeled(label string, op Operator) *Branch
+```
+
+`Branch` turns the linear chain into a **DAG**: the current tail fans out to N
+independent sub-chains, each running to the sink (fan-in is at the sink — the
+executor wires it off every terminal stage and merges). Each `func(*Branch)` builds
+one branch. Rules:
+
+- **≥2 branches** required; fewer is a builder error.
+- **DAG-terminal:** after `Branch` no further *linear* stage may be appended
+  (`Map`/`Apply`/… error) — call `To`/`Run`/`Build`. One `Branch` per stream.
+- **No prefix:** branching right after `From` injects a passthrough `split-N` anchor
+  so the source fans out to the branch heads (and the graph stays explicitly wired —
+  see below). An empty branch becomes a passthrough tee.
+- **Per-branch isolation:** on fan-out the executor copies each record per branch —
+  columnar chunk-records are deep-copied (`core.Batch.Clone`), row `Payload` maps are
+  shallow-copied — so a branch can `Map` independently. (Nested mutable values inside
+  a Payload are still shared; treat record values as immutable.)
+- **Explicit wiring:** the SDK wires `Stage.Next` for the whole graph when branched;
+  the executor auto-links by slice order **only** for purely linear pipelines (no
+  `Next` set anywhere), so a terminal branch in the middle of the slice is never
+  mis-linked.
+
 ### Terminal methods
 
 ```go

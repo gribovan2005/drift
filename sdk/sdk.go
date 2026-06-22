@@ -84,12 +84,13 @@ func WithLineage(t *lineage.Tracker) Option {
 // source with From, append stages, set a sink with To, then call Run (or Build).
 // A Stream produces one pipeline; re-running needs a fresh Stream.
 type Stream struct {
-	src    core.Source
-	stages []pipeline.Stage
-	sink   core.Sink
-	popts  []pipeline.Option
-	err    error // first builder error; surfaced at Build/Run
-	nstage int   // running count for auto-labels
+	src      core.Source
+	stages   []pipeline.Stage
+	sink     core.Sink
+	popts    []pipeline.Option
+	err      error // first builder error; surfaced at Build/Run
+	nstage   int   // running count for auto-labels
+	branched bool  // true after Branch: the stream is a DAG, no more linear stages
 }
 
 // New creates an empty Stream.
@@ -117,6 +118,10 @@ func (s *Stream) To(sink Sink) *Stream {
 func (s *Stream) add(kind string, op core.Operator) *Stream {
 	if s.err != nil {
 		return s // short-circuit after a builder error
+	}
+	if s.branched {
+		s.err = fmt.Errorf("drift: cannot append %q after Branch — the stream is a DAG (branches feed the sink directly)", kind)
+		return s
 	}
 	s.nstage++
 	s.stages = append(s.stages, pipeline.Stage{
@@ -185,6 +190,10 @@ func (s *Stream) Apply(op Operator) *Stream {
 // ApplyLabeled appends any core.Operator with an explicit stage label.
 func (s *Stream) ApplyLabeled(label string, op Operator) *Stream {
 	if s.err != nil {
+		return s
+	}
+	if s.branched {
+		s.err = fmt.Errorf("drift: cannot append %q after Branch — the stream is a DAG", label)
 		return s
 	}
 	s.stages = append(s.stages, pipeline.Stage{Label: label, Op: op})

@@ -304,13 +304,21 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	return nil
 }
 
-// resolveNext returns a copy of p.stages with linear Next filled in for
-// any stage that didn't set it explicitly.
+// resolveNext returns a copy of p.stages with linear Next filled in for a purely
+// linear pipeline. If ANY stage declares Next, the graph is taken as fully explicit —
+// an empty Next then means "terminal" (feeds the sink) and is NOT auto-linked to the
+// next slice entry. This lets a DAG keep terminal branches anywhere in the slice
+// (otherwise a branch tail in the middle would be wired to the next branch's head).
 func (p *Pipeline) resolveNext() []Stage {
 	stages := make([]Stage, len(p.stages))
 	copy(stages, p.stages)
 	for i := range stages {
-		if len(stages[i].Next) == 0 && i+1 < len(stages) {
+		if len(stages[i].Next) > 0 {
+			return stages // explicit DAG — respect Next exactly
+		}
+	}
+	for i := range stages {
+		if i+1 < len(stages) {
 			stages[i].Next = []string{stages[i+1].Label}
 		}
 	}
@@ -342,11 +350,13 @@ func rootLabels(stages []Stage, pred map[string][]string) []string {
 // broadcastAll reads from src and copies each record to every dst.
 // Closes all dsts when src is exhausted or ctx is cancelled.
 //
-// On true fan-out (more than one dst) a chunk-record's *core.Batch is deep-copied per
-// branch: vectorized operators mutate batches in place, so sharing one batch across
-// branches would corrupt siblings. Every branch (including the first) gets its own
-// clone of the never-handed-out source batch, so a downstream consumer can never race
-// the cloning of a sibling's copy. Linear edges (one dst) pass the record through
+// On true fan-out (more than one dst) each branch gets its own copy of the record so
+// branches can mutate independently: a chunk-record's *core.Batch is deep-copied
+// (vectorized ops mutate batches in place), and a row record's Payload map is
+// shallow-copied (so a per-branch Map reassigning a top-level key can't corrupt a
+// sibling — nested mutable values are still shared, so treat record values as
+// immutable). Every branch clones from the never-handed-out source, so a downstream
+// consumer can never race a sibling's copy. Linear edges (one dst) pass through
 // untouched — the common path stays allocation-free.
 func broadcastAll(ctx context.Context, src <-chan core.Record, dsts []chan core.Record) {
 	defer func() {
@@ -363,8 +373,17 @@ func broadcastAll(ctx context.Context, src <-chan core.Record, dsts []chan core.
 			}
 			for _, dst := range dsts {
 				rec := r
-				if fanOut && r.Chunk != nil {
-					rec.Chunk = r.Chunk.Clone()
+				if fanOut {
+					if r.Chunk != nil {
+						rec.Chunk = r.Chunk.Clone()
+					}
+					if r.Payload != nil {
+						m := make(map[string]any, len(r.Payload))
+						for k, v := range r.Payload {
+							m[k] = v
+						}
+						rec.Payload = m
+					}
 				}
 				select {
 				case dst <- rec:

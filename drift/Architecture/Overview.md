@@ -103,9 +103,9 @@ stream engine". All shipped:
   `MultiMatch` fan-out) are done; **stream-stream (mixed) joins** stay on the row
   engine.
 - (Done: inner + left-outer + M:N joins with NULL-mask columns; tumbling + sliding +
-  session columnar windows. Remaining columnar gap is stream-stream mixed joins.)
-- **Non-linear DAG in the SDK builder** — the row engine supports DAGs via
-  `Stage.Next`/YAML; the fluent SDK builds linear chains only.
+  session columnar windows; copy-on-fan-out for chunks; **non-linear DAG in the SDK
+  builder** via `Stream.Branch` — fan-out to N sub-chains, fan-in at the sink, with
+  per-branch record copies. Remaining columnar gap is stream-stream mixed joins.)
 
 (Horizontal scale-out with coordinated partitioned state + rebalance remains a
 **permanent non-goal** for the core — that's Flink/Kafka-Streams territory; run N
