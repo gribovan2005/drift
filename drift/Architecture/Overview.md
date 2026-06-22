@@ -47,7 +47,9 @@ Three levels, all within one process:
   independent pipelines (own source + sink each, no shared channel), the
   task-per-partition model. Highest single-node scaling (no funnel); fail-fast. Pair
   with the parallel triad (parallel source decode + `vector.Parallel` + `sink.Parallel`)
-  inside each lane. See [[Benchmarks]] (Lanes/MaxLane).
+  inside each lane. Keyed aggregation across lanes is global-correct without
+  key-sharding: each lane runs a partial `vector.GroupBy`, then `Group.MergeOp` folds
+  the partials into the global result. See [[Benchmarks]] (Lanes/MaxLane/DistGroupBy).
 
 ## Non-goals (permanent)
 
@@ -89,7 +91,7 @@ stream engine". All shipped:
 | **Prometheus metrics export** | ✅ done | dependency-free text exposition over `pipeline.Snapshot()`; `sdk.PrometheusHandler`, auth-exempt `GET /metrics`. See [[Metrics Export]] |
 | **Resource profiles** | ✅ done | `Sidecar`/`Dedicated` presets (batch/buffer/linger + opt-in process-global knobs); SDK (`WithProfile`) **and** YAML/runner (`profile:` field). See [[Resource Profiles]] |
 | **Parallel triad (source/stage/sink)** | ✅ done | `source.NewParallel` (+ Kafka partition readers) for decode, `vector.Parallel` for compute, `sink.Parallel` for egress — every serial point parallel; full columnar lane scales ~5.4× @8 (MaxLane). See [[Parallel Source]], [[Benchmarks]] |
-| **Vectorized fast-lane** | ✅ done | columnar `core.Batch` carried as chunk-records; Int64/Float64/String/Bool `Map`/`Filter` + global `Sum`/`Count`/`Max` + **keyed `GroupBy`** + **event-time `TumblingGroup`** (watermark, periodic emit) + **build-side `HashJoin`** (dimension enrichment); binary codec (all four kinds) + `KafkaColumnarSource`; `vector.Parallel` per-stage scaling; row-accurate metrics. **~247× on the stateless hot path, ~24× on group-by, ~52M rows/s over real Kafka.** See [[Vectorized Fast-Lane]], [[Benchmarks]] |
+| **Vectorized fast-lane** | ✅ done | columnar `core.Batch` carried as chunk-records; Int64/Float64/String/Bool `Map`/`Filter` + global `Sum`/`Count`/`Max` + **keyed `GroupBy`** (+ **distributed across lanes** via partials + `MergeOp`, no key-sharding needed) + **event-time `TumblingGroup`** (watermark, periodic emit) + **build-side `HashJoin`** (dimension enrichment); binary codec (all four kinds) + `KafkaColumnarSource`; `vector.Parallel` per-stage scaling; row-accurate metrics. **~247× on the stateless hot path, ~24× on group-by, ~52M rows/s over real Kafka.** See [[Vectorized Fast-Lane]], [[Benchmarks]] |
 
 ### Next (not yet built — explicit scope, not bugs)
 
@@ -97,12 +99,6 @@ stream engine". All shipped:
   Map/Filter, global + keyed `GroupBy`, event-time `TumblingGroup`, and build-side
   `HashJoin` (dimension enrichment) are done; **stream-stream (mixed) joins**,
   left-outer/M:N joins, and sliding/session windows stay on the row engine.
-- **Distributed keyed aggregation across lanes** — `pipeline.RunLanes` / `sdk.RunLanes`
-  run N independent pipelines (no shared channel), scaling ~5.9× at 8 lanes vs the
-  shared-channel ~5.4× (see [[Benchmarks]] Lanes). Keyed correctness across lanes
-  currently requires key/partition-sharded input; built-in key-hash sharding +
-  cross-lane result merge (so an unsharded `GroupBy` is global-correct across lanes)
-  is the next step.
 - **Left-outer / M:N joins** (need NULL columns) and **sliding/session** columnar
   windows remain on the row engine.
 - **Copy-on-fan-out for chunks** — vectorized ops mutate batches in place (safe for

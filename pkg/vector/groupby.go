@@ -238,37 +238,44 @@ func (o *groupOp) Process(in []core.Record) ([]core.Record, error) {
 }
 
 func (o *groupOp) Flush() ([]core.Record, error) {
+	return flushGroups(o.keyField, o.aggs, o.started, o.strKey, o.mi, o.ms)
+}
+
+// flushGroups emits one columnar result chunk from per-key accumulators: the key
+// column (sorted) plus one column per aggregate. Shared by groupOp and mergeOp,
+// which carry identical state.
+func flushGroups(keyField string, aggs []aggSpec, started, strKey bool, mi map[int64]*acc, ms map[string]*acc) ([]core.Record, error) {
 	// Schema: key column + one column per aggregate.
 	keyType := core.FieldTypeString
-	if o.started && !o.strKey {
+	if started && !strKey {
 		keyType = core.FieldTypeInt
 	}
-	fields := append([]core.Field{{Name: o.keyField, Type: keyType}}, aggFields(o.aggs)...)
+	fields := append([]core.Field{{Name: keyField, Type: keyType}}, aggFields(aggs)...)
 
 	// Collect rows in sorted key order, gathering each key's accumulator.
 	var n int
 	var keyI64 []int64
 	var keyStr []string
 	accs := []*acc{}
-	if o.strKey {
-		keyStr = make([]string, 0, len(o.ms))
-		for k := range o.ms {
+	if strKey {
+		keyStr = make([]string, 0, len(ms))
+		for k := range ms {
 			keyStr = append(keyStr, k)
 		}
 		sort.Strings(keyStr)
 		n = len(keyStr)
 		for _, k := range keyStr {
-			accs = append(accs, o.ms[k])
+			accs = append(accs, ms[k])
 		}
 	} else {
-		keyI64 = make([]int64, 0, len(o.mi))
-		for k := range o.mi {
+		keyI64 = make([]int64, 0, len(mi))
+		for k := range mi {
 			keyI64 = append(keyI64, k)
 		}
 		sort.Slice(keyI64, func(a, b int) bool { return keyI64[a] < keyI64[b] })
 		n = len(keyI64)
 		for _, k := range keyI64 {
-			accs = append(accs, o.mi[k])
+			accs = append(accs, mi[k])
 		}
 	}
 
@@ -281,7 +288,7 @@ func (o *groupOp) Flush() ([]core.Record, error) {
 		}
 		cols[0] = core.Column{Kind: core.KindString, Str: keyStr}
 	}
-	copy(cols[1:], aggColumns(o.aggs, accs))
+	copy(cols[1:], aggColumns(aggs, accs))
 
 	return []core.Record{{Chunk: &core.Batch{Schema: core.Schema{Fields: fields}, Len: n, Cols: cols}}}, nil
 }
