@@ -72,6 +72,37 @@ Prioritised by dependency order:
 | **Record-level lineage** | ✅ done | `pkg/lineage` — per-stage record IDs + parent graph via `pipeline.WithLineage`; **exact** for all built-ins, including per-window provenance for aggregating windows. See [[Lineage]] |
 | **Control plane + visual builder** | ✅ done | `pkg/runner` (job store over a YAML folder + runtime pipeline runner) + `pkg/web` builder. Build a DAG visually, save/load YAML, run/stop from the UI. Rebuild-per-run + pointer swap under `RWMutex` (DAG stays immutable). `drift serve`. See [[Control Plane]], [[Web UI & Builder]] |
 
+### Library, distribution & performance
+
+The pivot to "embed Drift in a Go service" and "be the fastest single-node Go
+stream engine". All shipped:
+
+| Feature | Status | Notes |
+|---|---|---|
+| **Embeddable Go SDK** | ✅ done | root `drift/sdk` fluent facade (`sdk.New().From().Map().To().Run()`); module is `go get`-able. See [[SDK]] |
+| **Homebrew distribution** | ✅ done | `brew install gribovan2005/drift/drift`; GoReleaser + tap, single self-contained binary. See [[Distribution]] |
+| **Prometheus metrics export** | ✅ done | dependency-free text exposition over `pipeline.Snapshot()`; `sdk.PrometheusHandler`, auth-exempt `GET /metrics`. See [[Metrics Export]] |
+| **Resource profiles** | ✅ done | `Sidecar`/`Dedicated` presets (batch/buffer/linger + opt-in process-global knobs); SDK (`WithProfile`) **and** YAML/runner (`profile:` field). See [[Resource Profiles]] |
+| **Parallel / sharded source** | ✅ done | `source.NewParallel` + Kafka partition-pinned readers (`KafkaPartitions`) lift the single-reader ingestion ceiling. See [[Parallel Source]] |
+| **Vectorized fast-lane** | ✅ done | columnar `core.Batch` carried as chunk-records; Int64/Float64/String/Bool `Map`/`Filter` + global `Sum`/`Count`/`Max` + **keyed `GroupBy`** (Int64/String keys, count/sum/max); binary codec (all four kinds) + `KafkaColumnarSource`; `vector.Parallel` per-stage scaling; row-accurate metrics. **~247× on the stateless hot path, ~24× on group-by, ~52M rows/s over real Kafka.** See [[Vectorized Fast-Lane]], [[Benchmarks]] |
+
+### Next (not yet built — explicit scope, not bugs)
+
+- **Vectorized *windowed* keyed aggregations + joins** — keyed **global** group-by
+  is done (`vector.GroupBy`); windowed (periodic-emit) keyed aggregation and joins
+  stay on the row (`map[string]any`) engine.
+- **Raise the single-node ceiling further** — parallelise the vectorized *sink* and
+  source-side decode; the current end-to-end cap is the single source goroutine and
+  single terminal stage, not compute.
+- **Copy-on-fan-out for chunks** — vectorized ops mutate batches in place (safe for
+  linear pipelines only); a branching DAG sharing a chunk needs a copy.
+- **Non-linear DAG in the SDK builder** — the row engine supports DAGs via
+  `Stage.Next`/YAML; the fluent SDK builds linear chains only.
+
+(Horizontal scale-out with coordinated partitioned state + rebalance remains a
+**permanent non-goal** for the core — that's Flink/Kafka-Streams territory; run N
+independent partition-pipelines instead. See [[Benchmarks]].)
+
 ## See also
 
 - [[Core Abstractions]]

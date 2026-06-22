@@ -90,6 +90,14 @@ func SumFloat64(field, out string) core.Operator
 func MaxInt64(field, out string) core.Operator
 func CountRows(out string) core.Operator
 
+// Keyed GROUP BY (Flusher: accumulate per key, emit one columnar result chunk on flush)
+func GroupBy(keyField string) *Group        // key column: Int64 or String
+func (g *Group) Count(out string) *Group
+func (g *Group) SumInt64(valField, out string) *Group
+func (g *Group) SumFloat64(valField, out string) *Group
+func (g *Group) MaxInt64(valField, out string) *Group
+func (g *Group) Op() core.Operator          // build the operator
+
 // Parallel: run n copies of a stateless op across n goroutines (round-robin chunks)
 func Parallel(n int, mk func() core.Operator) core.Operator
 ```
@@ -104,6 +112,13 @@ func Parallel(n int, mk func() core.Operator) core.Operator
   result leaves the columnar world, so it goes to any normal sink. They are
   **single-stage** — do not wrap an aggregate in `Parallel` (you'd get per-shard
   partials); only stateless Map/Filter are parallelisable.
+- **`GroupBy(key).<aggs>.Op()`** is a **keyed, global** group-by (Flusher): it keeps
+  a per-key accumulator (typed `map[int64]` or `map[string]` by the key column's
+  kind — no per-row boxing) updated with a tight per-column loop, and on `Flush`
+  emits **one columnar result chunk** whose `Batch` has the key column + one column
+  per aggregate (`Count`/`SumInt64`/`SumFloat64`/`MaxInt64`), keys in sorted order.
+  It is **single-stage** (don't wrap in `Parallel` — partials). Global = emits once
+  at end of stream; windowed keyed group-by is future work.
 - **`Parallel(n, mk)`** wraps `pipeline.Parallel`: it round-robins whole chunk-
   records across `n` fresh operators on `n` goroutines, so a CPU-heavy vectorized
   stage scales with cores (measured ~5.8× at 8 cores; see [[Benchmarks]]). Each
@@ -141,10 +156,11 @@ N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-e
 ## Scope (honest)
 
 - **In scope:** `Int64`/`Float64`/`String`/`Bool` columns; `Map`/`Filter`; global
-  aggregates (`Sum`/`Max`/`Count`); per-stage parallelism (`Parallel`); columnar mem
-  source + collect/discard sinks + a row bridge. Covers the stateless transform hot
-  path plus simple `SELECT sum/count/max ... WHERE ...`.
-- **Out of scope (stay on the row path):** windowed/keyed aggregations, joins,
+  aggregates (`Sum`/`Max`/`Count`); **keyed global GROUP BY** (`GroupBy`, Int64/String
+  keys); per-stage parallelism (`Parallel`); columnar mem source + collect/discard
+  sinks + a row bridge. Covers the stateless transform hot path plus
+  `SELECT key, count/sum/max ... [WHERE ...] GROUP BY key`.
+- **Out of scope (stay on the row path):** **windowed** keyed aggregations, joins,
   schema evolution, WAL. The binary codec covers all four column kinds
   (Int64/Float64 fixed-width, Bool 1 byte, String length-prefixed). The fast-lane
   does **not** replace the engine.
