@@ -57,6 +57,42 @@ func WithLineage(t *lineage.Tracker) Option {
 	}
 }
 
+// WithBatchSize sets the per-stage batch size (records processed per Operator
+// call). Larger favours throughput, smaller favours latency. Non-positive n is
+// ignored. Default 64.
+func WithBatchSize(n int) Option {
+	return func(p *Pipeline) {
+		if n > 0 {
+			p.batchSize = n
+		}
+	}
+}
+
+// WithChannelBuffer sets the default inter-stage channel buffer. A per-stage
+// Stage.BufSize still overrides this. Larger favours throughput (absorbs bursts),
+// smaller favours a tighter memory footprint. Non-positive n is ignored.
+// Default 256.
+func WithChannelBuffer(n int) Option {
+	return func(p *Pipeline) {
+		if n > 0 {
+			p.chanBuf = n
+		}
+	}
+}
+
+// WithMaxLinger enables a time-based partial-batch flush: a stage with a partial
+// batch flushes at least every d, instead of waiting to fill batchSize or for the
+// input to close. This is what lets a small batch size deliver low latency under
+// sparse input. d<=0 (the default) disables it entirely — no timer is created and
+// the data path is unchanged.
+func WithMaxLinger(d time.Duration) Option {
+	return func(p *Pipeline) {
+		if d > 0 {
+			p.linger = d
+		}
+	}
+}
+
 // Pipeline connects a Source through a DAG of Stages to a Sink.
 // Each stage runs in its own goroutine and communicates via buffered channels.
 // Metrics are collected automatically for every stage.
@@ -65,6 +101,8 @@ type Pipeline struct {
 	stages     []Stage
 	sink       core.Sink
 	batchSize  int
+	chanBuf    int           // default inter-stage channel buffer; Stage.BufSize overrides
+	linger     time.Duration // >0 enables a time-based partial-batch flush
 	stageM     []*metrics.StageMetrics
 	logger     *slog.Logger
 	checkpoint checkpoint.Store
@@ -82,6 +120,7 @@ func New(source core.Source, stages []Stage, sink core.Sink, opts ...Option) *Pi
 		stages:    stages,
 		sink:      sink,
 		batchSize: defaultBatchSize,
+		chanBuf:   defaultChannelBuf,
 		stageM:    sm,
 		logger:    slog.Default(),
 	}
@@ -153,7 +192,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 				return s.BufSize
 			}
 		}
-		return defaultChannelBuf
+		return p.chanBuf
 	}
 
 	for _, s := range stages {
@@ -164,7 +203,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 			edges[edgeKey{s.Label, next}] = make(chan core.Record, bufFor(next))
 		}
 		if len(s.Next) == 0 {
-			edges[edgeKey{s.Label, "sink"}] = make(chan core.Record, defaultChannelBuf)
+			edges[edgeKey{s.Label, "sink"}] = make(chan core.Record, p.chanBuf)
 		}
 	}
 
@@ -224,7 +263,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	if len(sinkSrcs) == 1 {
 		sinkIn = sinkSrcs[0]
 	} else {
-		merged := make(chan core.Record, defaultChannelBuf)
+		merged := make(chan core.Record, p.chanBuf)
 		go mergeAll(ctx, sinkSrcs, merged)
 		sinkIn = merged
 	}
@@ -238,7 +277,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		p.stageM[i].SetQueueLen(func() int64 { return int64(len(in)) })
 		stageLog := log.With("stage", stage.Label)
 		stageLog.Info("stage starting")
-		go runStage(ctx, cancel, stage.Op, in, stageOut[stage.Label], errCh, p.batchSize, p.stageM[i], stageLog, p.tap, stage.Label)
+		go runStage(ctx, cancel, stage.Op, in, stageOut[stage.Label], errCh, p.batchSize, p.linger, p.stageM[i], stageLog, p.tap, stage.Label)
 	}
 
 	sinkErrCh := make(chan error, 1)
@@ -415,6 +454,7 @@ func runStage(
 	out chan<- core.Record,
 	errCh chan<- error,
 	batchSize int,
+	linger time.Duration,
 	sm *metrics.StageMetrics,
 	log *slog.Logger,
 	tap *Tap,
@@ -423,6 +463,15 @@ func runStage(
 	defer close(out)
 
 	batch := make([]core.Record, 0, batchSize)
+
+	// Optional time-based partial-batch flush. linger<=0 leaves tickC nil, so its
+	// select case never fires — zero overhead, identical to the size-only path.
+	var tickC <-chan time.Time
+	if linger > 0 {
+		t := time.NewTicker(linger)
+		defer t.Stop()
+		tickC = t.C
+	}
 
 	flush := func() bool {
 		if len(batch) == 0 {
@@ -484,6 +533,11 @@ func runStage(
 				if !flush() {
 					return
 				}
+			}
+		case <-tickC:
+			// Linger timeout: emit whatever has accumulated (no-op if empty).
+			if !flush() {
+				return
 			}
 		case <-ctx.Done():
 			errCh <- nil
