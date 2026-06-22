@@ -192,3 +192,43 @@ func TestSchemaAdapter_LiveEvolution(t *testing.T) {
 	assert.Equal(t, 2, out2[0].SchemaVersion)
 	assert.Equal(t, "", out2[0].Payload["tag"], "new field gets default")
 }
+
+func TestSchemaAdapter_CoercesFieldTypes(t *testing.T) {
+	s := core.Schema{ID: "t", Version: 1, Fields: []core.Field{
+		{Name: "i", Type: core.FieldTypeInt},
+		{Name: "f", Type: core.FieldTypeFloat},
+		{Name: "s", Type: core.FieldTypeString},
+		{Name: "b", Type: core.FieldTypeBool},
+		{Name: "any", Type: core.FieldTypeAny},
+	}}
+	a := NewSchemaAdapter(s, nil)
+	out, err := a.Process([]core.Record{{Payload: map[string]any{
+		"i":   3.9,     // float→int (truncate) → 3
+		"f":   int64(7), // int→float (widen) → 7.0
+		"s":   42,      // →string → "42"
+		"b":   "true",  // parse → true
+		"any": []int{1}, // passthrough
+	}}})
+	require.NoError(t, err)
+	p := out[0].Payload
+	assert.Equal(t, int64(3), p["i"])
+	assert.Equal(t, 7.0, p["f"])
+	assert.Equal(t, "42", p["s"])
+	assert.Equal(t, true, p["b"])
+	assert.Equal(t, []int{1}, p["any"])
+}
+
+// TestSchemaAdapter_LiveRetype proves a column's TYPE can change between versions and
+// the adapter coerces live — the headline "evolve without restart" applied to types.
+func TestSchemaAdapter_LiveRetype(t *testing.T) {
+	v1 := core.Schema{ID: "m", Version: 1, Fields: []core.Field{{Name: "amount", Type: core.FieldTypeInt}}}
+	v2 := core.Schema{ID: "m", Version: 2, Fields: []core.Field{{Name: "amount", Type: core.FieldTypeFloat}}}
+	a := NewSchemaAdapter(v1, nil)
+
+	out1, _ := a.Process([]core.Record{{Payload: map[string]any{"amount": int64(5)}}})
+	assert.Equal(t, int64(5), out1[0].Payload["amount"], "v1: int stays int")
+
+	a.OnSchemaChange(v2) // amount widened int→float, no restart
+	out2, _ := a.Process([]core.Record{{Payload: map[string]any{"amount": int64(5)}}})
+	assert.Equal(t, 5.0, out2[0].Payload["amount"], "v2: same input now a float")
+}

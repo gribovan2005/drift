@@ -158,18 +158,30 @@ type Operator interface {
 
 ### Live Schema Evolution
 
-Publish a new schema version at runtime — subscribed operators receive `OnSchemaChange` immediately and adapt with the next batch. No restart required.
+**Drift's headline feature.** Publish a new schema version at runtime — subscribed operators receive `OnSchemaChange` immediately and adapt with the next batch. No restart, no state migration. The `SchemaAdapter` reshapes records to the current schema: it **adds** new fields (with defaults), **drops** removed fields, **renames** via an alias map, and **coerces** each value to its new type — so even a *column type change* (e.g. `int → float`) takes effect mid-stream.
 
 ```go
 reg := schema.NewRegistry()
 reg.Register(v1)
 
-adapter := operator.NewSchemaAdapter(v1, AliasMap{"amount": "value"})
+adapter := operator.NewSchemaAdapter(v1, AliasMap{"amount": "amount_usd"})
 reg.Subscribe("payments", adapter)
 
-// Later, mid-stream:
+// Later, mid-stream — the running pipeline never stops:
 reg.Register(v2)  // → adapter.OnSchemaChange(v2) called automatically
 ```
+
+See it in 5 lines of output:
+
+```text
+$ go run ./cmd/schemademo
+── v1 (amount: int) ────────────────────────────────
+  v1   amount=1299(int64) merchant=acme(string)
+── v2 (live: amount→amount_usd, int→float, +region) — no restart ──
+  v2   amount_usd=1299(float64) merchant=acme(string) region=us(string)
+```
+
+Same producer input, evolved live: the field was renamed, retyped `int → float`, and a new `region` field appeared — with zero downtime.
 
 ---
 
