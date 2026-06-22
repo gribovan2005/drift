@@ -73,15 +73,31 @@ Built-in operator that normalises records to the current schema. Use this instea
 
 | Situation | Action |
 |---|---|
-| Field in record AND schema | Pass through |
+| Field in record AND schema | Pass through, **coerced to `Field.Type`** |
 | Field missing in record, present in schema | Insert `Field.Default` |
 | Field in record, NOT in schema (removed) | Drop it |
-| Field renamed (via `AliasMap`) | Read old name → write new name |
+| Field renamed (via `AliasMap`) | Read old name → write new name (coerced) |
+| Field **type changed** between versions | Coerce the value to the new `Field.Type` |
 
 ```go
 adapter := operator.NewSchemaAdapter(initialSchema, AliasMap{"amount": "value"})
 registry.Subscribe("payments", adapter)
 ```
+
+### Type coercion
+
+A field's value is coerced to its declared `Field.Type`, so a **column type change**
+between schema versions takes effect live (the same way add/remove/rename do). Rules
+(best-effort, never panics, never drops data):
+
+- numeric **widening is lossless** (`int`→`float`); `float`→`int` **truncates**
+- `→string` uses `fmt`; `string`/`bool` are parsed when valid
+- `bool`↔number: nonzero ⇄ true
+- unparseable values, and `any`/`bytes`/untyped fields, **pass through unchanged**;
+  `nil` stays `nil`
+
+Demo: `go run ./cmd/schemademo` evolves `amount: int` → `amount_usd: float` (rename +
+retype) and adds `region` **with no restart**.
 
 ---
 
@@ -106,6 +122,8 @@ Records already in pipeline channels carry their original `SchemaVersion`. Opera
 |---|---|---|
 | `TestRegistry_SubscriberNotified` | `pkg/schema` | Subscriber receives all versions |
 | `TestSchemaAdapter_LiveEvolution` | `pkg/operator` | Field add/remove/rename mid-stream |
+| `TestSchemaAdapter_CoercesFieldTypes` | `pkg/operator` | Values coerced to each `Field.Type` |
+| `TestSchemaAdapter_LiveRetype` | `pkg/operator` | Column type widened int→float mid-stream |
 | `TestPipeline_LiveSchemaEvolution` | `tests/integration` | E2E: old-version records + new schema in parallel |
 
 ---

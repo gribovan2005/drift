@@ -125,10 +125,13 @@ The engine is broad; the next phase closes the gap between **feature breadth** a
    back with **no Go**: `jobs/fastlane-groupby.yaml` and `jobs/fastlane-streamjoin.yaml`
    (the latter tags two sides via `to-batch id` and fans them into one `vec-streamjoin`
    through the DAG). Verified end-to-end + web-palette + parity under `-race`.
-2. **Hero feature — live schema evolution, sharpened.** It is the objectively rarest
-   differentiator (competitors require a job restart). Lever 2 makes it the headline:
-   tighten the contract/coverage across the columnar path, and add a focused
-   demo/story that shows a schema change mid-stream with zero downtime.
+2. **Hero feature — live schema evolution, sharpened (✅ done).** It is the objectively
+   rarest differentiator (competitors require a job restart). The `SchemaAdapter`
+   contract now also **coerces values to each field's type**, so a *column type change*
+   (int→float, parse, etc.) evolves live alongside add/remove/rename — closing the
+   obvious gap. A focused, deterministic demo (`cmd/schemademo`) shows a producer's
+   records reshaped mid-stream (rename + retype + new field) with no restart, and the
+   README leads with it as the headline.
 3. **One reference end-to-end demo.** A single convincing pipeline — Kafka →
    `StreamJoin` + windowed aggregation → sink, on the columnar path, with metrics and a
    schema that changes live — proving speed *and* the differentiators at once. Builds on
