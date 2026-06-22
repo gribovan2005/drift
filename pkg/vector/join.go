@@ -8,10 +8,11 @@ import (
 
 // HashJoin builds a vectorized build-side hash join: a lookup table is built once
 // from `build` batches keyed by `buildKey`, then each probe chunk is matched by
-// `probeKey` and **enriched** with the requested build columns (Bring). Inner join
-// — matched probe rows are kept (compacted), unmatched dropped. The build side is
-// treated as a **lookup table: one row per key** (later builds override) — the
-// dimension-enrichment case (no M:N fan-out, no NULLs/left-outer yet).
+// `probeKey` and **enriched** with the requested build columns (Bring). Inner join by
+// default — matched probe rows are kept (compacted), unmatched dropped; call
+// LeftOuter to keep unmatched probe rows with NULL brought cells instead. The build
+// side is treated as a **lookup table: one row per key** (later builds override) — the
+// dimension-enrichment case (no M:N fan-out).
 //
 // The build table is read-only after construction, so a HashJoin IS safe under
 // vector.Parallel (each shard builds its own copy). Keys are Int64 or String.
@@ -32,11 +33,20 @@ type HJoin struct {
 	build              []*core.Batch
 	buildKey, probeKey string
 	brings             []bring
+	leftOuter          bool
 }
 
 // Bring appends build column `field` (renamed to `out`) to matched probe rows.
 func (j *HJoin) Bring(field, out string) *HJoin {
 	j.brings = append(j.brings, bring{field: field, out: out})
+	return j
+}
+
+// LeftOuter switches the join from inner to left-outer: every probe row is kept; an
+// unmatched probe row keeps its own columns and gets NULL (validity mask) in each
+// brought column. Default is inner (unmatched probe rows dropped).
+func (j *HJoin) LeftOuter() *HJoin {
+	j.leftOuter = true
 	return j
 }
 
@@ -164,7 +174,9 @@ func (o *joinOp) Process(in []core.Record) ([]core.Record, error) {
 			}
 		}
 
-		// Match: keep probe rows with a build hit, compact in place, record build idx.
+		// Match each probe row to a build index. Inner: drop unmatched (compact in
+		// place). Left-outer: keep every row, recording a -1 sentinel for unmatched so
+		// gatherBuild emits NULL brought cells.
 		w := 0
 		buildIdx := make([]int, 0, b.Len)
 		for i := 0; i < b.Len; i++ {
@@ -176,7 +188,10 @@ func (o *joinOp) Process(in []core.Record) ([]core.Record, error) {
 				idx, ok = o.li[ikeys[i]]
 			}
 			if !ok {
-				continue
+				if !o.leftOuter {
+					continue
+				}
+				idx = -1 // no match → NULL brought cells
 			}
 			if w != i {
 				b.CopyRow(w, i)
@@ -196,32 +211,59 @@ func (o *joinOp) Process(in []core.Record) ([]core.Record, error) {
 	return out, nil
 }
 
+// gatherBuild materialises one brought column for the kept probe rows. A build index
+// of -1 (left-outer, no match) yields a NULL cell: the typed slot stays zero and a
+// validity mask is allocated lazily (nil when there are no nulls — the inner-join
+// case — keeping it zero-overhead).
 func gatherBuild(bc buildCol, idx []int) core.Column {
+	var null []bool
+	markNull := func(i int) {
+		if null == nil {
+			null = make([]bool, len(idx))
+		}
+		null[i] = true
+	}
 	switch bc.kind {
 	case core.KindFloat64:
 		v := make([]float64, len(idx))
 		for i, bi := range idx {
+			if bi < 0 {
+				markNull(i)
+				continue
+			}
 			v[i] = bc.f64[bi]
 		}
-		return core.Column{Kind: core.KindFloat64, F64: v}
+		return core.Column{Kind: core.KindFloat64, F64: v, Null: null}
 	case core.KindString:
 		v := make([]string, len(idx))
 		for i, bi := range idx {
+			if bi < 0 {
+				markNull(i)
+				continue
+			}
 			v[i] = bc.str[bi]
 		}
-		return core.Column{Kind: core.KindString, Str: v}
+		return core.Column{Kind: core.KindString, Str: v, Null: null}
 	case core.KindBool:
 		v := make([]bool, len(idx))
 		for i, bi := range idx {
+			if bi < 0 {
+				markNull(i)
+				continue
+			}
 			v[i] = bc.b[bi]
 		}
-		return core.Column{Kind: core.KindBool, B: v}
+		return core.Column{Kind: core.KindBool, B: v, Null: null}
 	default: // Int64
 		v := make([]int64, len(idx))
 		for i, bi := range idx {
+			if bi < 0 {
+				markNull(i)
+				continue
+			}
 			v[i] = bc.i64[bi]
 		}
-		return core.Column{Kind: core.KindInt64, I64: v}
+		return core.Column{Kind: core.KindInt64, I64: v, Null: null}
 	}
 }
 

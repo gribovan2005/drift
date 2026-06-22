@@ -32,6 +32,11 @@ func EncodeBatch(b *core.Batch) ([]byte, error) {
 	binary.LittleEndian.PutUint32(scratch[:4], uint32(len(b.Cols)))
 	buf.Write(scratch[:4])
 	for i, c := range b.Cols {
+		if c.Null != nil {
+			// The wire format carries no validity mask yet; refuse rather than silently
+			// dropping NULLs (e.g. a left-outer join result). Convert via ToRows for now.
+			return nil, fmt.Errorf("vector: EncodeBatch: column %q has NULLs; binary codec has no null mask yet", b.Schema.Fields[i].Name)
+		}
 		buf.WriteByte(byte(c.Kind))
 		name := b.Schema.Fields[i].Name
 		binary.LittleEndian.PutUint16(scratch[:2], uint16(len(name)))

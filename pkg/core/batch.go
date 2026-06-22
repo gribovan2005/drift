@@ -20,6 +20,13 @@ type Column struct {
 	F64  []float64
 	Str  []string
 	B    []bool
+
+	// Null is an optional per-row validity mask: Null[i]==true marks cell i as NULL
+	// (its typed slot holds a zero value to be ignored). A nil Null means the column
+	// has no nulls — the common case, so existing all-valid columns stay zero-cost and
+	// every operator that doesn't opt into nulls is unaffected. Produced e.g. by a
+	// left-outer join for unmatched rows.
+	Null []bool
 }
 
 // Batch is a columnar block of Len rows. Cols is parallel to Schema.Fields. It
@@ -68,8 +75,18 @@ func (b *Batch) Bool(field string) []bool {
 	return b.Cols[i].B[:b.Len]
 }
 
+// IsNull returns the named column's null mask (truncated to Len), or nil if the
+// column is missing or has no nulls. mask[i]==true means row i is NULL.
+func (b *Batch) IsNull(field string) []bool {
+	i := b.Schema.FieldIndex(field)
+	if i < 0 || i >= len(b.Cols) || b.Cols[i].Null == nil {
+		return nil
+	}
+	return b.Cols[i].Null[:b.Len]
+}
+
 // CopyRow copies row src to row dst across every column, keeping columns aligned.
-// Used by vectorized Filter to compact in place.
+// Used by vectorized Filter to compact in place. The null mask travels with the row.
 func (b *Batch) CopyRow(dst, src int) {
 	for ci := range b.Cols {
 		c := &b.Cols[ci]
@@ -82,6 +99,9 @@ func (b *Batch) CopyRow(dst, src int) {
 			c.Str[dst] = c.Str[src]
 		case KindBool:
 			c.B[dst] = c.B[src]
+		}
+		if c.Null != nil {
+			c.Null[dst] = c.Null[src]
 		}
 	}
 }
@@ -99,6 +119,9 @@ func (b *Batch) Truncate(n int) {
 			c.Str = c.Str[:n]
 		case KindBool:
 			c.B = c.B[:n]
+		}
+		if c.Null != nil {
+			c.Null = c.Null[:n]
 		}
 	}
 	b.Len = n

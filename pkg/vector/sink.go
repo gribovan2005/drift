@@ -93,6 +93,10 @@ func (rowExpand) Process(in []core.Record) ([]core.Record, error) {
 			payload := make(map[string]any, len(b.Cols))
 			for ci := range b.Cols {
 				name := b.Schema.Fields[ci].Name
+				if b.Cols[ci].Null != nil && b.Cols[ci].Null[i] {
+					payload[name] = nil // NULL cell → absent value on the row path
+					continue
+				}
 				switch b.Cols[ci].Kind {
 				case core.KindInt64:
 					payload[name] = b.Cols[ci].I64[i]

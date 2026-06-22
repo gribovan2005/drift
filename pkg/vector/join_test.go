@@ -108,6 +108,123 @@ func TestHashJoin_NoMatch(t *testing.T) {
 	}
 }
 
+func TestHashJoin_LeftOuter(t *testing.T) {
+	dim := dimInt([]int64{1, 2, 3}, []string{"US", "DE", "JP"}, []int64{10, 20, 30})
+	// probe: user 2 matches, 99 doesn't (→ NULL brought cells), 1 matches.
+	probe := probeInt([]int64{2, 99, 1}, []int64{100, 200, 300})
+	c := runVec(t, []*core.Batch{probe},
+		vector.HashJoin([]*core.Batch{dim}, "id", "user_id").
+			Bring("country", "country").Bring("tier", "tier").LeftOuter().Op())
+
+	res := c.Batches()[0]
+	if res.Len != 3 {
+		t.Fatalf("left-outer rows = %d, want 3 (99 kept with NULLs)", res.Len)
+	}
+	uid := res.Int64("user_id")
+	amt := res.Int64("amt")
+	country := res.String("country")
+	tier := res.Int64("tier")
+	cNull := res.IsNull("country")
+	tNull := res.IsNull("tier")
+	if cNull == nil || tNull == nil {
+		t.Fatal("expected null masks on brought columns")
+	}
+	// row order preserved: 2 (match), 99 (no match → NULL), 1 (match).
+	if uid[0] != 2 || amt[0] != 100 || country[0] != "DE" || tier[0] != 20 || cNull[0] || tNull[0] {
+		t.Fatalf("row0 = uid%d amt%d %q tier%d cNull%v", uid[0], amt[0], country[0], tier[0], cNull[0])
+	}
+	if uid[1] != 99 || amt[1] != 200 || !cNull[1] || !tNull[1] {
+		t.Fatalf("row1 (unmatched) should be NULL brought: uid%d amt%d cNull%v tNull%v", uid[1], amt[1], cNull[1], tNull[1])
+	}
+	if uid[2] != 1 || amt[2] != 300 || country[2] != "US" || tier[2] != 10 || cNull[2] || tNull[2] {
+		t.Fatalf("row2 = uid%d amt%d %q tier%d cNull%v", uid[2], amt[2], country[2], tier[2], cNull[2])
+	}
+}
+
+// TestHashJoin_LeftOuter_AllMatch keeps the null mask nil (zero-overhead) when every
+// probe row matches — left-outer must not differ from inner in that case.
+func TestHashJoin_LeftOuter_AllMatch(t *testing.T) {
+	dim := dimInt([]int64{1, 2}, []string{"US", "DE"}, []int64{10, 20})
+	probe := probeInt([]int64{1, 2}, []int64{5, 6})
+	c := runVec(t, []*core.Batch{probe},
+		vector.HashJoin([]*core.Batch{dim}, "id", "user_id").Bring("country", "country").LeftOuter().Op())
+	res := c.Batches()[0]
+	if res.Len != 2 {
+		t.Fatalf("rows = %d, want 2", res.Len)
+	}
+	if res.IsNull("country") != nil {
+		t.Fatal("all matched → null mask should stay nil (zero-overhead)")
+	}
+}
+
+// TestHashJoin_LeftOuter_FilterDownstream exercises CopyRow/Truncate carrying the null
+// mask: a Filter after a left-outer join compacts a batch whose brought column has
+// NULLs, so the surviving rows must keep the right null bits.
+func TestHashJoin_LeftOuter_FilterDownstream(t *testing.T) {
+	dim := dimInt([]int64{1, 3}, []string{"US", "JP"}, []int64{10, 30})
+	// keys: 1 match, 2 no, 3 match, 4 no. amt = 1,2,3,4.
+	probe := probeInt([]int64{1, 2, 3, 4}, []int64{1, 2, 3, 4})
+	c := vector.Collect()
+	err := sdk.New().
+		From(vector.MemSource([]*core.Batch{probe})).
+		Apply(vector.HashJoin([]*core.Batch{dim}, "id", "user_id").Bring("country", "country").LeftOuter().Op()).
+		Apply(vector.FilterInt64("amt", func(x int64) bool { return x%2 == 0 })). // keep amt 2,4 (both unmatched)
+		To(c).Run(context.Background())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	res := c.Batches()[0]
+	if res.Len != 2 {
+		t.Fatalf("after filter rows = %d, want 2", res.Len)
+	}
+	cNull := res.IsNull("country")
+	uid := res.Int64("user_id")
+	// both survivors (uid 2 and 4) were unmatched → NULL country.
+	for i := 0; i < res.Len; i++ {
+		if !cNull[i] {
+			t.Fatalf("row %d uid%d: expected NULL country after compaction", i, uid[i])
+		}
+	}
+}
+
+// TestHashJoin_LeftOuter_ToRows checks NULL cells surface as nil on the row path.
+func TestHashJoin_LeftOuter_ToRows(t *testing.T) {
+	dim := dimInt([]int64{1}, []string{"US"}, []int64{10})
+	probe := probeInt([]int64{1, 99}, []int64{5, 6})
+	out := sdk.Collect()
+	err := sdk.New().
+		From(vector.MemSource([]*core.Batch{probe})).
+		Apply(vector.HashJoin([]*core.Batch{dim}, "id", "user_id").Bring("country", "country").LeftOuter().Op()).
+		Apply(vector.ToRows()).
+		To(out).Run(context.Background())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rows := out.Records()
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	// matched row has a country; unmatched has nil.
+	if rows[0].Payload["country"] != "US" {
+		t.Fatalf("row0 country = %v, want US", rows[0].Payload["country"])
+	}
+	if v, ok := rows[1].Payload["country"]; !ok || v != nil {
+		t.Fatalf("row1 country = %v (ok=%v), want explicit nil", v, ok)
+	}
+}
+
+// TestEncodeBatch_NullRefused guards against silently dropping NULLs over the wire.
+func TestEncodeBatch_NullRefused(t *testing.T) {
+	b := &core.Batch{
+		Schema: core.Schema{Fields: []core.Field{{Name: "x", Type: core.FieldTypeInt}}},
+		Len:    2,
+		Cols:   []core.Column{{Kind: core.KindInt64, I64: []int64{1, 0}, Null: []bool{false, true}}},
+	}
+	if _, err := vector.EncodeBatch(b); err == nil {
+		t.Fatal("expected EncodeBatch to refuse a column with NULLs")
+	}
+}
+
 func TestHashJoin_Errors(t *testing.T) {
 	dim := dimInt([]int64{1}, []string{"US"}, []int64{1})
 	run := func(j core.Operator, probe *core.Batch) error {
