@@ -101,9 +101,24 @@ Profiles tune **knobs only**. They do **not**:
 - raise the single-source ingestion ceiling or change the `map[string]any` record
   format (separate, larger future work — see [[Benchmarks]]);
 - auto-parallelise stages — stage data-parallelism stays manual via
-  `Apply(pipeline.Parallel(...))` or job `StageSpec.Parallelism`;
-- thread through the YAML/`pkg/runner` (`drift serve`) path yet — SDK path only this
-  iteration (the engine Options are reusable when that's wired later).
+  `Apply(pipeline.Parallel(...))` or job `StageSpec.Parallelism`.
+
+### YAML / runner path
+
+A job spec may set a top-level `profile: sidecar|dedicated` field; `job.Load`
+validates it and `Built.Pipeline` prepends the profile's **local** options
+(batch/buffer/linger) via `sdk.ProfileByName(...).PipelineOptions()`. Process-global
+knobs (GOMAXPROCS/GOGC) are **not** applied from a job — one job must not re-tune
+the whole `drift serve` process; use the SDK with `OwnsProcess()` for a dedicated
+single-job binary instead.
+
+```yaml
+name: payments
+profile: sidecar          # tunes batch/buffer/linger; engine defaults if omitted
+source: { type: kafka, ... }
+stages: [ ... ]
+sink: { type: ... }
+```
 
 ---
 

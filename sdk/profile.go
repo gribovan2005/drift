@@ -3,6 +3,7 @@ package sdk
 import (
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/gribovan2005/drift/pkg/pipeline"
@@ -62,16 +63,37 @@ func (p Profile) runtimeSettings() (maxprocs, gcpercent int, memlimit int64) {
 	return p.GOMAXPROCS, p.GCPercent, p.MemLimit
 }
 
+// PipelineOptions returns the profile's LOCAL (non-process-global) pipeline
+// options — batch size, channel buffer, max-linger. The single source of truth for
+// applying a profile to a pipeline; used by WithProfile and by the YAML/runner path
+// (pkg/job) so a job's `profile:` field tunes the same knobs.
+func (p Profile) PipelineOptions() []pipeline.Option {
+	return []pipeline.Option{
+		pipeline.WithBatchSize(p.BatchSize),
+		pipeline.WithChannelBuffer(p.ChannelBuffer),
+		pipeline.WithMaxLinger(p.MaxLinger),
+	}
+}
+
+// ProfileByName returns the named preset ("sidecar"/"dedicated", case-insensitive)
+// and whether it was found. Used by the YAML loader to resolve a `profile:` field.
+func ProfileByName(name string) (Profile, bool) {
+	switch strings.ToLower(name) {
+	case "sidecar":
+		return Sidecar, true
+	case "dedicated":
+		return Dedicated, true
+	default:
+		return Profile{}, false
+	}
+}
+
 // WithProfile applies a resource profile. LOCAL knobs (batch/buffer/linger) are
 // always applied. PROCESS-GLOBAL knobs are applied only if the profile came from
 // OwnsProcess().
 func WithProfile(p Profile) Option {
 	return func(s *Stream) {
-		s.popts = append(s.popts,
-			pipeline.WithBatchSize(p.BatchSize),
-			pipeline.WithChannelBuffer(p.ChannelBuffer),
-			pipeline.WithMaxLinger(p.MaxLinger),
-		)
+		s.popts = append(s.popts, p.PipelineOptions()...)
 		if !p.ownsProcess {
 			return
 		}
