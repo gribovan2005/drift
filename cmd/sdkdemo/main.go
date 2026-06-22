@@ -25,6 +25,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"math/rand"
@@ -45,6 +46,21 @@ const addr = ":8090"
 var merchants = []string{"stripe", "paypal", "adyen", "braintree", "square"}
 
 func main() {
+	profileName := flag.String("profile", "sidecar", "resource profile: sidecar|dedicated")
+	flag.Parse()
+
+	// The demo owns its process, so the Dedicated profile may tune process-global
+	// runtime knobs (GOMAXPROCS/GOGC) via OwnsProcess().
+	var profile sdk.Profile
+	switch *profileName {
+	case "dedicated":
+		profile = sdk.Dedicated.OwnsProcess()
+	case "sidecar":
+		profile = sdk.Sidecar.OwnsProcess()
+	default:
+		log.Fatalf("unknown -profile %q (want sidecar|dedicated)", *profileName)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -71,7 +87,7 @@ func main() {
 
 	// ── Build the pipeline with the fluent SDK ───────────────────────────────
 	rng := rand.New(rand.NewSource(42))
-	p, err := sdk.New().
+	p, err := sdk.New(sdk.WithProfile(profile)).
 		From(sdk.Generate(func(seq int) sdk.Record {
 			amount := rng.Float64()*10000 + 0.5
 			if seq%17 == 0 { // occasional spike for the fraud guard to drop
@@ -152,10 +168,11 @@ func main() {
 
 	fmt.Printf(`
 Drift SDK demo — real-time payment analytics embedded in a Go service
+  profile: %s (batch=%d, buffer=%d, linger=%s, GOMAXPROCS=%d)
   GET http://localhost%s/stats     live window aggregates (materialized view)
   GET http://localhost%s/metrics   Prometheus scrape
   → live schema evolution at t+15s (watch "schema_has_risk_score" flip to true)
-`, addr, addr)
+`, *profileName, profile.BatchSize, profile.ChannelBuffer, profile.MaxLinger, profile.GOMAXPROCS, addr, addr)
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Printf("http: %v", err)
