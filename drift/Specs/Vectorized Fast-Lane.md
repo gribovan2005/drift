@@ -110,6 +110,7 @@ func (g *WGroup) Op() core.Operator
 func HashJoin(build []*core.Batch, buildKey, probeKey string) *HJoin
 func (j *HJoin) Bring(buildField, outField string) *HJoin
 func (j *HJoin) LeftOuter() *HJoin            // keep unmatched probe rows, NULL brought cells
+func (j *HJoin) MultiMatch() *HJoin           // M:N: build keeps all rows/key, probe fans out
 func (j *HJoin) Op() core.Operator
 
 // Parallel: run n copies of a stateless op across n goroutines (round-robin chunks)
@@ -165,7 +166,16 @@ func Parallel(n int, mk func() core.Operator) core.Operator
   unmatched probe row keeps its own columns and gets **NULL** in each brought column
   (via the column null mask, see below). When every row matches the mask stays nil
   (zero-overhead — identical to inner). `ToRows` renders a NULL cell as `nil` on the
-  row path. (M:N fan-out still future work — build remains one row per key.)
+  row path.
+- **`.MultiMatch()`** makes the build side a full **M:N relation**: it keeps *every*
+  build row per key (not last-write-wins), and each probe row **fans out** to one
+  output row per matching build row (K build rows for a key → K output rows). Output is
+  a **fresh** batch (probe columns gathered/repeated per match + brought columns) — the
+  input chunk is not mutated, so it composes with the in-place ops cleanly. Combine
+  with `.LeftOuter()` for a left M:N join (a no-match probe row still emits one
+  NULL-brought row). Default (off) keeps the efficient one-row-per-key dimension path
+  (in-place compaction). Build maps stay read-only after build, so M:N is still safe
+  under `Parallel`.
 
 ### NULL columns (validity mask)
 
@@ -217,13 +227,14 @@ N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-e
   **distributed across lanes** via partials + `MergeOp` (no key-sharding needed) and
   **event-time tumbling keyed aggregation** (`TumblingGroup`, Int64/String keys,
   int64 ts column); **build-side hash join** (`HashJoin`, dimension enrichment, inner
-  **and left-outer** via NULL-mask columns); per-stage parallelism (`Parallel`);
+  **and left-outer** via NULL-mask columns, **and M:N** fan-out via `MultiMatch`);
+  per-stage parallelism (`Parallel`);
   columnar mem source + collect/discard sinks +
   a row bridge. Covers the stateless hot path plus
   `SELECT [tumble(ts,size),] key, count/sum/max ..., dim.attr [WHERE ...]
   [JOIN dim] [GROUP BY ...]`.
-- **Out of scope (stay on the row path):** stream-stream (mixed) joins, **M:N** joins
-  (build is one row per key), sliding/session windows, schema evolution, WAL. The
+- **Out of scope (stay on the row path):** stream-stream (mixed) joins,
+  sliding/session windows, schema evolution, WAL. The
   binary codec covers all four column kinds
   (Int64/Float64 fixed-width, Bool 1 byte, String length-prefixed) but **not** the NULL
   mask yet (`EncodeBatch` errors on a null column). The fast-lane does **not** replace
