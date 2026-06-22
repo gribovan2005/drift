@@ -119,7 +119,7 @@ func Discard() core.Sink                              // drains chunk-records
 func ToRows() core.Operator                          // expand a chunk → row Records (handoff to row path/sinks)
 
 // Binary columnar codec + wire source (decode counts toward throughput):
-func EncodeBatch(b *core.Batch) ([]byte, error)      // binary columnar frame (Int64/Float64)
+func EncodeBatch(b *core.Batch) ([]byte, error)      // binary columnar frame (Int64/Float64/String/Bool)
 func DecodeBatch(data []byte) (*core.Batch, error)   // hand-rolled fast decode
 func BinSource(frames [][]byte) core.Source          // decode frames → chunk-records (model a binary topic)
 func KafkaColumnarSource(brokers []string, topic string, partition int) core.Source // decode a Kafka partition's binary frames
@@ -145,9 +145,9 @@ N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-e
   source + collect/discard sinks + a row bridge. Covers the stateless transform hot
   path plus simple `SELECT sum/count/max ... WHERE ...`.
 - **Out of scope (stay on the row path):** windowed/keyed aggregations, joins,
-  schema evolution, WAL. The binary **codec is Int64/Float64 only** — String/Bool
-  columns can't yet cross the binary wire (`EncodeBatch` errors on them). The
-  fast-lane does **not** replace the engine.
+  schema evolution, WAL. The binary codec covers all four column kinds
+  (Int64/Float64 fixed-width, Bool 1 byte, String length-prefixed). The fast-lane
+  does **not** replace the engine.
 - **Caveats:** vectorized Map/Filter mutate chunks in place — correct for a linear
   pipeline; a fan-out DAG sharing a chunk would need a copy (not provided this
   iteration). Chunk-records must not hit JSON/row sinks directly — use `ToRows` first.
