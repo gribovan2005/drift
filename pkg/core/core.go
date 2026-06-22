@@ -68,6 +68,12 @@ type Record struct {
 	// idempotent sink can recognise and skip duplicates. Set by the WAL source
 	// (wal:<LSN>); empty when exactly-once is disabled. See pkg/wal.
 	DeliveryKey string
+
+	// Chunk, when non-nil, makes this a "chunk-record": a columnar block of N rows
+	// carried through the pipeline for the vectorized fast-lane. Nil for normal row
+	// records. omitempty keeps the JSON wire format of row records unchanged.
+	// See pkg/core/batch.go and pkg/vector.
+	Chunk *Batch `json:"chunk,omitempty"`
 }
 
 // Operator transforms a batch of Records. Implementations must be safe
