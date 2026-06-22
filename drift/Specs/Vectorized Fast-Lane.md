@@ -120,6 +120,11 @@ func (j *HJoin) LeftOuter() *HJoin            // keep unmatched probe rows, NULL
 func (j *HJoin) MultiMatch() *HJoin           // M:N: build keeps all rows/key, probe fans out
 func (j *HJoin) Op() core.Operator
 
+// Stream-stream event-time INTERVAL equi-join (both sides stream on one mixed input)
+func StreamJoin(leftID, rightID, keyField, tsField string, window int64) *SJoin
+func (j *SJoin) Lateness(l int64) *SJoin
+func (j *SJoin) Op() core.Operator
+
 // Parallel: run n copies of a stateless op across n goroutines (round-robin chunks)
 func Parallel(n int, mk func() core.Operator) core.Operator
 ```
@@ -197,6 +202,19 @@ func Parallel(n int, mk func() core.Operator) core.Operator
   NULL-brought row). Default (off) keeps the efficient one-row-per-key dimension path
   (in-place compaction). Build maps stay read-only after build, so M:N is still safe
   under `Parallel`.
+- **`StreamJoin(leftID, rightID, key, ts, window).Op()`** is a **stream-stream
+  event-time interval** equi-join (vs `HashJoin`'s bounded dimension table): both sides
+  stream on one mixed input — the DAG fan-in merges the two upstreams — and a chunk is
+  assigned to a side by its `Batch.Schema.ID`. Each side is **buffered per key**; a row
+  matches an opposite-side buffered row when keys are equal and `|ts_left − ts_right| ≤
+  window`. The **watermark** (`max ts seen across both sides − lateness`) evicts
+  buffered rows that can no longer match (`ts < watermark − window`) and drops late
+  arrivals (counted) — so state stays bounded by the window, not the stream. Lateness is
+  judged against the watermark from *prior* batches (a row isn't dropped by a later
+  timestamp in its own batch). Inner, emitted eagerly (not a Flusher). Output = all left
+  columns + every right column except the redundant right key (a colliding right name is
+  suffixed `_r`); buffered state uses unboxed typed cells, output is rebuilt columnar.
+  Keys Int64/String (consistent across sides). Single-stage.
 
 ### NULL columns (validity mask)
 
@@ -250,13 +268,13 @@ N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-e
   `SlidingGroup`, `SessionGroup`; Int64/String keys, int64 ts column); **build-side
   hash join** (`HashJoin`, dimension enrichment, inner
   **and left-outer** via NULL-mask columns, **and M:N** fan-out via `MultiMatch`);
+  **stream-stream event-time interval join** (`StreamJoin`, watermark state cleanup);
   per-stage parallelism (`Parallel`);
   columnar mem source + collect/discard sinks +
   a row bridge. Covers the stateless hot path plus
   `SELECT [tumble(ts,size),] key, count/sum/max ..., dim.attr [WHERE ...]
-  [JOIN dim] [GROUP BY ...]`.
-- **Out of scope (stay on the row path):** stream-stream (mixed) joins, schema
-  evolution, WAL. The
+  [JOIN dim | JOIN stream ON key AND ts WITHIN window] [GROUP BY ...]`.
+- **Out of scope (stay on the row path):** schema evolution, WAL. The
   binary codec covers all four column kinds
   (Int64/Float64 fixed-width, Bool 1 byte, String length-prefixed) but **not** the NULL
   mask yet (`EncodeBatch` errors on a null column). The fast-lane does **not** replace
