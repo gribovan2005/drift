@@ -104,6 +104,11 @@ func (g *WGroup) Lateness(l int64) *WGroup                        // allowed lat
 func (g *WGroup) Count/SumInt64/SumFloat64/MaxInt64(...) *WGroup
 func (g *WGroup) Op() core.Operator
 
+// Build-side hash join (enrich a probe stream with a dimension/lookup table)
+func HashJoin(build []*core.Batch, buildKey, probeKey string) *HJoin
+func (j *HJoin) Bring(buildField, outField string) *HJoin
+func (j *HJoin) Op() core.Operator
+
 // Parallel: run n copies of a stateless op across n goroutines (round-robin chunks)
 func Parallel(n int, mk func() core.Operator) core.Operator
 ```
@@ -134,6 +139,14 @@ func Parallel(n int, mk func() core.Operator) core.Operator
   fires all remaining open windows. `size`/`lateness` are int64 in the ts column's
   unit. Single-stage. Out-of-order/stalled streams keep windows open (memory) — same
   property as the row operator; lateness bounds it.
+- **`HashJoin(build, buildKey, probeKey).Bring(...).Op()`** is a **build-side hash
+  join** (DuckDB/Velox-style): a lookup table is built once from the `build` batches
+  (key → row), then each probe chunk is matched by `probeKey` and **enriched** with
+  the `Bring`-requested build columns. **Inner** join — matched probe rows are
+  compacted (reusing `CopyRow`/`Truncate`), unmatched dropped; output = probe columns
+  + brought columns. Build side is a **lookup table (one row per key**, later builds
+  override) — dimension enrichment, not general M:N; no NULL/left-outer yet. The
+  build table is read-only, so HashJoin **is** safe under `Parallel`.
 - **`Parallel(n, mk)`** wraps `pipeline.Parallel`: it round-robins whole chunk-
   records across `n` fresh operators on `n` goroutines, so a CPU-heavy vectorized
   stage scales with cores (measured ~5.8× at 8 cores; see [[Benchmarks]]). Each
@@ -173,11 +186,14 @@ N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-e
 - **In scope:** `Int64`/`Float64`/`String`/`Bool` columns; `Map`/`Filter`; global
   aggregates (`Sum`/`Max`/`Count`); **keyed global GROUP BY** (`GroupBy`) and
   **event-time tumbling keyed aggregation** (`TumblingGroup`, Int64/String keys,
-  int64 ts column); per-stage parallelism (`Parallel`); columnar mem source +
-  collect/discard sinks + a row bridge. Covers the stateless hot path plus
-  `SELECT [tumble(ts,size),] key, count/sum/max ... [WHERE ...] GROUP BY ...`.
-- **Out of scope (stay on the row path):** joins, sliding/session windows, schema
-  evolution, WAL. The binary codec covers all four column kinds
+  int64 ts column); **build-side hash join** (`HashJoin`, dimension enrichment);
+  per-stage parallelism (`Parallel`); columnar mem source + collect/discard sinks +
+  a row bridge. Covers the stateless hot path plus
+  `SELECT [tumble(ts,size),] key, count/sum/max ..., dim.attr [WHERE ...]
+  [JOIN dim] [GROUP BY ...]`.
+- **Out of scope (stay on the row path):** stream-stream (mixed) joins,
+  left-outer/M:N joins, sliding/session windows, schema evolution, WAL. The binary
+  codec covers all four column kinds
   (Int64/Float64 fixed-width, Bool 1 byte, String length-prefixed). The fast-lane
   does **not** replace the engine.
 - **Caveats:** vectorized Map/Filter mutate chunks in place — correct for a linear

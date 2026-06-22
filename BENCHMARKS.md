@@ -224,6 +224,23 @@ per chunk. Global keyed group-by (emits on flush); windowed keyed is future work
 go test ./tests/bench/ -run VectorGroupBy -v -count=1
 ```
 
+### Vectorized hash join (`vector.HashJoin`)
+
+Build-side hash join (enrich a stream with a dimension table) — columnar vs row.
+2M rows enriched against a 1000-key dimension:
+
+| path | rows/sec | vs row |
+|---|---:|---:|
+| row (`map[string]any` + lookup map) | 1.62 M/s | 1.00× |
+| **vec (columnar)** | **96.0 M/s** | **~59×** |
+
+→ Build the lookup once, probe columnar (key column → build index, gather build
+columns by index, compact matched rows). Inner / dimension-enrichment semantics.
+
+```bash
+go test ./tests/bench/ -run VectorJoin -v -count=1
+```
+
 ### End-to-end with binary decode (`cmd/e2ebench`)
 
 The fairer test: data arrives **as frames** that are **decoded in the hot path**
