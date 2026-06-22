@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 	kafka "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

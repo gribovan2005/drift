@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/checkpoint"
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/lineage"
-	"github.com/andrejgribov/drift/pkg/metrics"
+	"github.com/gribovan2005/drift/pkg/checkpoint"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/lineage"
+	"github.com/gribovan2005/drift/pkg/metrics"
 )
 
 const defaultBatchSize = 64

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // HTTP listens on Addr and turns POST /ingest requests into a record stream.

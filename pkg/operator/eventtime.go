@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // ── TimestampAssigner ─────────────────────────────────────────────────────

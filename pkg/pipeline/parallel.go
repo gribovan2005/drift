@@ -6,7 +6,7 @@ import (
 	"hash/fnv"
 	"sync"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // Parallel runs k instances of an operator (one per shard) concurrently, routing

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // KeyFunc extracts a string deduplication key from a record.

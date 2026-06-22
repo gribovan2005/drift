@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // Registry stores versioned schemas and notifies subscribers when a new

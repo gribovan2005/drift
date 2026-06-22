@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // File writes each record as one JSON object per line (NDJSON) to a file. This

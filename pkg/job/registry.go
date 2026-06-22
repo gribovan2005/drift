@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // registry holds host-registered code-defined components resolved by "ref:<name>".

@@ -12,16 +12,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/andrejgribov/drift/internal/dotenv"
-	"github.com/andrejgribov/drift/pkg/ai"
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/dlq"
-	"github.com/andrejgribov/drift/pkg/operator"
-	"github.com/andrejgribov/drift/pkg/pipeline"
-	"github.com/andrejgribov/drift/pkg/schema"
-	"github.com/andrejgribov/drift/pkg/sink"
-	"github.com/andrejgribov/drift/pkg/source"
-	"github.com/andrejgribov/drift/pkg/web"
+	"github.com/gribovan2005/drift/internal/dotenv"
+	"github.com/gribovan2005/drift/pkg/ai"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/dlq"
+	"github.com/gribovan2005/drift/pkg/operator"
+	"github.com/gribovan2005/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/pkg/schema"
+	"github.com/gribovan2005/drift/pkg/sink"
+	"github.com/gribovan2005/drift/pkg/source"
+	"github.com/gribovan2005/drift/pkg/web"
 )
 
 var (

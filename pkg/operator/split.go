@@ -3,7 +3,7 @@ package operator
 import (
 	"fmt"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // RouterFunc maps a record to an output route index in [0, n).

@@ -11,8 +11,8 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"github.com/andrejgribov/drift/pkg/metrics"
-	"github.com/andrejgribov/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/pkg/metrics"
+	"github.com/gribovan2005/drift/pkg/pipeline"
 )
 
 // GraphNode re-exports pipeline.GraphNode so callers only import pkg/ai.

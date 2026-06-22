@@ -3,7 +3,7 @@ package source
 import (
 	"context"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // Memory is an in-memory Source that emits a fixed slice of records.

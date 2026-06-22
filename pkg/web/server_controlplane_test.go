@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/ai"
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/job"
-	"github.com/andrejgribov/drift/pkg/runner"
-	"github.com/andrejgribov/drift/pkg/schema"
+	"github.com/gribovan2005/drift/pkg/ai"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/job"
+	"github.com/gribovan2005/drift/pkg/runner"
+	"github.com/gribovan2005/drift/pkg/schema"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

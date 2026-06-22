@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/andrejgribov/drift/pkg/checkpoint"
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/checkpoint"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // keyPrefix is the delivery-key namespace stamped by the WAL source.

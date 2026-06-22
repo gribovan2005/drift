@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/operator"
-	"github.com/andrejgribov/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/operator"
+	"github.com/gribovan2005/drift/pkg/pipeline"
 )
 
 // buildStageOp builds a stage's operator, applying intra-stage parallelism when

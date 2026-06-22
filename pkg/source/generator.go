@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // GeneratorFunc produces the next Record given a monotonically increasing

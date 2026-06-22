@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // KeyedAggregateFunc reduces one key's window of records to a single output. The

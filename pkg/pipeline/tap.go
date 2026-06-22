@@ -3,7 +3,7 @@ package pipeline
 import (
 	"sync"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // Tap captures the most recent records emitted by each stage so the UI can show

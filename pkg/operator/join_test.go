@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -1,6 +1,6 @@
 package operator
 
-import "github.com/andrejgribov/drift/pkg/core"
+import "github.com/gribovan2005/drift/pkg/core"
 
 // FlatMapFunc transforms one Record into zero or more Records.
 type FlatMapFunc func(core.Record) ([]core.Record, error)

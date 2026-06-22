@@ -4,12 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/lineage"
-	"github.com/andrejgribov/drift/pkg/operator"
-	"github.com/andrejgribov/drift/pkg/pipeline"
-	"github.com/andrejgribov/drift/pkg/sink"
-	"github.com/andrejgribov/drift/pkg/source"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/lineage"
+	"github.com/gribovan2005/drift/pkg/operator"
+	"github.com/gribovan2005/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/pkg/sink"
+	"github.com/gribovan2005/drift/pkg/source"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

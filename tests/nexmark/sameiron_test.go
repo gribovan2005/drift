@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/pipeline"
 )
 
 // boundedBidSource generates n bid records on the fly (no rate limit) then closes.
