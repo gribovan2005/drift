@@ -215,6 +215,47 @@ go run ./cmd/e2ebench
 
 ---
 
+## Resource profiles — does "beast mode" do anything?
+
+The `Dedicated` (beast) SDK profile bundles a bigger batch (512 vs 64), bigger
+buffers, and — when it `OwnsProcess()` — `GOMAXPROCS`/`GOGC`. Measured on an Apple
+M-series (8 logical cores), single representative run (`tests/bench/beast_test.go`):
+
+**Linear pipeline** (5M records, map, `GOMAXPROCS=1` — isolates batch/GC):
+
+| config | rec/sec | vs default |
+|---|---:|---:|
+| default (batch 64, GOGC 100) | 1.14 M/s | 1.00× |
+| beast (batch 512, GOGC 100) | 1.49 M/s | 1.30× |
+| beast + GOGC 200 | 1.63 M/s | **1.43×** |
+
+→ A real, modest win from batching + GC. Cores do **not** help a linear pipeline
+(the single source goroutine is the ceiling), so the profile pins the gain to
+batch/buffer/GC there.
+
+**Compute-bound stage** (2M records, ~µs CPU per record, `pipeline.Parallel`):
+
+| GOMAXPROCS / shards | rec/sec | vs 1 core |
+|---|---:|---:|
+| 1 | 155 k/s | 1.00× |
+| 2 | 289 k/s | 1.86× |
+| 4 | 396 k/s | 2.55× |
+| 8 | 450 k/s | **2.90×** |
+
+→ When the stage is genuinely CPU-bound and wrapped in `pipeline.Parallel`, owning
+the node and giving it cores scales throughput — ~1.9× at 2 cores, tapering to
+~2.9× at 8. It is **sublinear**: the single source + fan-out/gather is a serial
+fraction (Amdahl), which is exactly the ceiling the parallel-ingestion work would
+raise. Beast mode helps; it is not magic.
+
+Caveats: single noisy run; M-series laptop; take medians before quoting.
+
+```bash
+go test ./tests/bench/ -run BeastMode -v -count=1
+```
+
+---
+
 ## Reproduce
 
 ```bash
