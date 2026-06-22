@@ -237,6 +237,9 @@ func MemSource(batches []*core.Batch) core.Source   // emits one chunk-record pe
 func GenInt64(field string, nBatches, rows int, fill func(i int) int64) []*core.Batch // bench/test helper
 func Collect() *Collector                            // keeps chunks; .Rows() / .Batches()
 func Discard() core.Sink                              // drains chunk-records
+func FromRows(size int) core.Operator                // row → columnar bridge (batch rows into chunks)
+func FromRowsAs(size int, schemaID string) core.Operator // FromRows + stamp Batch.Schema.ID (tag a join side)
+func BatchOf(rows []map[string]any) *core.Batch      // one batch from static rows (e.g. a join build table)
 func ToRows() core.Operator                          // expand a chunk → row Records (handoff to row path/sinks)
 
 // Binary columnar codec + wire source (decode counts toward throughput):
@@ -256,6 +259,28 @@ decodes in the read path, modelling a Kafka topic of binary-columnar messages; w
 N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-end
 (decode in the hot path, 5M records): JSON+row `~1.2 M/s` vs binary+vectorized
 `~360 M/s`, parallel binary+vec `~430 M/s` — see [[Benchmarks]] and `cmd/e2ebench`.
+
+### Row ↔ columnar bridges
+
+`FromRows(size)` accumulates incoming **row** Records and emits columnar chunks of up
+to `size` rows (Flush emits the partial final chunk). The schema is inferred from the
+**first row**: field names sorted for a stable column order, Go types
+int/int64→Int64, float64→Float64, string→String, bool→Bool; a later row missing a
+field or holding a mismatched type gets a NULL cell (validity mask). `ToRows` is the
+inverse. Together they let a row pipeline **drop into the fast lane and back**, which
+is what makes the fast lane reachable declaratively.
+
+### Declarative (YAML / control plane)
+
+The fast-lane operators are registered in the job catalog (`pkg/job`), so a pipeline
+uses them with **no Go**: bridge in with `to-batch` (FromRows), run `vec-*` ops, bridge
+out with `to-rows` before a row sink. Ops: `to-batch`, `to-rows`, `vec-filter`,
+`vec-map`, `vec-groupby`, `vec-tumbling`, `vec-sliding`, `vec-session`, `vec-join`
+(inline dimension table), `vec-streamjoin` (aggregates as a comma list
+`count | sum:<f> | sumi:<f> | max:<f>`). They are single-stage (reject `parallelism`).
+A **stream-stream** join in YAML tags each side with a `to-batch` `id` (→ `FromRowsAs`
+stamps `Batch.Schema.ID`) and fans both into one `vec-streamjoin` via the DAG. See
+`jobs/fastlane-groupby.yaml`, `jobs/fastlane-streamjoin.yaml` and [[CLI & Jobs]].
 
 ---
 

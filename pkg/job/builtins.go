@@ -47,6 +47,9 @@ func parallelKey(s StageSpec) (func(core.Record) string, error) {
 		return fieldKey(kf), nil
 	case "tumbling", "eventwindow":
 		return nil, fmt.Errorf("%s is a global window with no partition key and cannot be parallelized (set parallelism: 1)", s.Op)
+	case "to-batch", "to-rows", "vec-filter", "vec-map", "vec-join", "vec-streamjoin",
+		"vec-groupby", "vec-tumbling", "vec-sliding", "vec-session":
+		return nil, fmt.Errorf("%s is a fast-lane (columnar) op and is single-stage; use vector.Parallel in code, not stage parallelism (set parallelism: 1)", s.Op)
 	default:
 		return nil, fmt.Errorf("parallelism is only supported for built-in stateless or keyed operators, not %q", s.Op)
 	}
@@ -128,6 +131,26 @@ func buildOperator(s StageSpec) (core.Operator, error) {
 		return buildEventWindow(p)
 	case "session":
 		return buildSession(p)
+	case "to-batch":
+		return buildFromRows(p)
+	case "to-rows":
+		return vectorToRows(), nil
+	case "vec-filter":
+		return buildVecFilter(p)
+	case "vec-map":
+		return buildVecMap(p)
+	case "vec-join":
+		return buildVecJoin(p)
+	case "vec-streamjoin":
+		return buildVecStreamJoin(p)
+	case "vec-groupby":
+		return buildVecGroupBy(p)
+	case "vec-tumbling":
+		return buildVecTumbling(p)
+	case "vec-sliding":
+		return buildVecSliding(p)
+	case "vec-session":
+		return buildVecSession(p)
 	default:
 		return nil, fmt.Errorf("unknown op %q", s.Op)
 	}
