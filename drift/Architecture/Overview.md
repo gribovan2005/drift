@@ -132,13 +132,21 @@ The engine is broad; the next phase closes the gap between **feature breadth** a
    obvious gap. A focused, deterministic demo (`cmd/schemademo`) shows a producer's
    records reshaped mid-stream (rename + retype + new field) with no restart, and the
    README leads with it as the headline.
-3. **One reference end-to-end demo.** A single convincing pipeline — Kafka →
-   `StreamJoin` + windowed aggregation → sink, on the columnar path, with metrics and a
-   schema that changes live — proving speed *and* the differentiators at once. Builds on
-   levers 1 and 2.
+3. **One reference end-to-end demo (✅ done).** `cmd/referencedemo` runs a single
+   pipeline that ties speed to the differentiator: an evolving producer stream →
+   `SchemaAdapter` (live v1→v2, adds a field mid-stream, zero downtime) → the columnar
+   fast lane (`FromRows` → `TumblingGroup` windowed aggregation → `ToRows`) → sink, then
+   reports throughput and the windowed results — every record aggregated across the
+   schema boundary, no restart. (The columnar **stream-stream join** path is shown
+   separately in `jobs/fastlane-streamjoin.yaml`; a long-lived typed columnar aggregate
+   keyed on a column whose *type* flips mid-stream is the one combination that stays a
+   row-path concern by design — the adapter absorbs type changes at ingestion.) An
+   integration test (`tests/integration/fastlane_evolution_test.go`) locks the
+   compose-across-the-boundary property.
 
-These are **integration and narrative** work, not new engine primitives — the goal is
-coherence: make the strongest capabilities reachable and legible.
+These were **integration and narrative** work, not new engine primitives — the goal was
+coherence: make the strongest capabilities reachable and legible. **All three levers
+done.**
 
 ## See also
 
