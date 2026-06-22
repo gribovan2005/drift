@@ -53,6 +53,15 @@ ANTHROPIC_API_KEY=sk-ant-... ./demo
 The demo runs a payment-processing pipeline at ~500 records/sec.  
 After **30 seconds**, schema v2 is published live — watch the Schema Evolution panel update with zero downtime.
 
+### Reference pipeline (one command, no infra)
+
+```bash
+go run ./cmd/referencedemo      # evolving stream → SchemaAdapter → fast-lane windowed agg → sink
+go run ./cmd/schemademo         # live schema evolution (rename + retype + add) in 5 lines
+```
+
+`referencedemo` ties the whole story together: an evolving order stream flows through the live `SchemaAdapter` into the **columnar fast lane** (windowed revenue per merchant), the schema is **evolved mid-stream** (a field added, no restart), and it prints throughput + windowed results — every record aggregated across the schema boundary.
+
 ---
 
 ## Use as a library
