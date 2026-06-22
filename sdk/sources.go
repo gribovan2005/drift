@@ -28,3 +28,15 @@ func HTTPSource(addr string) Source {
 func KafkaSource(cfg source.KafkaConfig) Source {
 	return source.NewKafka(cfg)
 }
+
+// ParallelSource fans N sub-sources into one stream, read concurrently — use it to
+// lift the single-reader ingestion ceiling. Cross-source order is not preserved.
+func ParallelSource(subs ...Source) Source {
+	return source.NewParallel(subs...)
+}
+
+// KafkaPartitions reads the given partitions of one topic in parallel (one
+// partition-pinned reader each, fanned in). See source.KafkaPartitions.
+func KafkaPartitions(cfg source.KafkaConfig, partitions []int) Source {
+	return source.KafkaPartitions(cfg, partitions)
+}

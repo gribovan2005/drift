@@ -22,6 +22,7 @@ Streaming data processing engine for Go. Single binary, zero external dependenci
 - [[Schema Evolution]] — live schema propagation contract
 - [[Operators]] — Map, Filter, FlatMap, SchemaAdapter, TumblingWindow, SlidingWindow
 - [[Sources & Sinks]] — Memory, HTTP, Kafka
+- [[Parallel Source]] — fan-in N sources / Kafka partitions to lift the single-reader ingestion ceiling
 - [[SDK]] — single-import fluent facade for embedding Drift in Go services (subpackage `drift/sdk`)
 - [[Resource Profiles]] — Sidecar/Dedicated tuning presets (batch/buffer/linger + opt-in runtime knobs)
 - [[Metrics Export]] — Prometheus text exposition over `Snapshot()` (`pkg/metrics`, `sdk.PrometheusHandler`, `GET /metrics`)
