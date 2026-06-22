@@ -69,8 +69,26 @@ sink:
 | `eventwindow` | `size` (dur), `lateness` (dur), `agg` | `operator.NewEventTimeWindow` |
 | `session` | `key` (field), `gap` (dur), `agg` | `operator.NewSessionWindow` |
 
-**Aggregations (`agg`):** `count` (emits `{count: n}`) or `sum:<field>` (emits
-`{sum: Σfield}`). Durations use Go syntax (`5s`, `100ms`).
+**Fast-lane (columnar) ops** — bridge in/out and run `vec-*` on chunk-records (see
+[[Vectorized Fast-Lane]]):
+
+| `op` | Params | Maps to |
+|---|---|---|
+| `to-batch` | `size` (int, default 1024) | `vector.FromRows` (row→columnar) |
+| `to-rows` | — | `vector.ToRows` (columnar→row) |
+| `vec-filter` | `field`, `cmp` (`gte`/`lte`/`eq`), `value` (number) | `vector.FilterInt64`/`FilterFloat64` |
+| `vec-groupby` | `key`, `agg` | `vector.GroupBy` |
+| `vec-tumbling` | `key`, `ts`, `size` (int), `lateness` (int), `agg` | `vector.TumblingGroup` |
+| `vec-sliding` | `key`, `ts`, `size`, `hop` (int), `lateness`, `agg` | `vector.SlidingGroup` |
+| `vec-session` | `key`, `ts`, `gap` (int), `lateness`, `agg` | `vector.SessionGroup` |
+
+Fast-lane `agg` is a comma list: `count | sum:<f> (float64) | sumi:<f> (int64) |
+max:<f> (int64)`; output columns `count` / `sum_<f>` / `sumi_<f>` / `max_<f>`. Window
+`size`/`hop`/`gap`/`lateness` are int64 in the `ts` column's unit. `vec-*` ops are
+single-stage (reject `parallelism`). Example: `jobs/fastlane-groupby.yaml`.
+
+**Aggregations (`agg`):** for row ops, `count` (emits `{count: n}`) or `sum:<field>`
+(emits `{sum: Σfield}`). Durations use Go syntax (`5s`, `100ms`).
 
 **`timestamp` field values:** a `time.Time`, an RFC3339(Nano) string, or a number
 read as Unix seconds; anything else yields the zero time.

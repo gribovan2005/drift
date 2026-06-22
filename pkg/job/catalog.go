@@ -94,6 +94,44 @@ func Catalog() Palette {
 				{Name: "gap", Kind: KindDuration, Required: true, Doc: "Inactivity gap that closes a session."},
 				{Name: "agg", Kind: KindString, Default: "count", Doc: "\"count\" or \"sum:<field>\"."},
 			}},
+
+			// ── Fast-lane (columnar) ops. Bridge in with to-batch and out with to-rows;
+			//    the vec-* ops run on columnar chunk-records. See [[Vectorized Fast-Lane]].
+			{Kind: "operator", Type: "to-batch", Doc: "Row→columnar bridge: batch rows into chunks for the fast lane.", Params: []Param{
+				{Name: "size", Kind: KindInt, Default: 1024, Doc: "Rows per columnar chunk (≥1)."},
+			}},
+			{Kind: "operator", Type: "to-rows", Doc: "Columnar→row bridge: expand chunks back to row Records for a row sink."},
+			{Kind: "operator", Type: "vec-filter", Doc: "Columnar filter on a numeric column.", Params: []Param{
+				{Name: "field", Kind: KindString, Required: true, Doc: "Int64/Float64 column to test."},
+				{Name: "cmp", Kind: KindEnum, Required: true, Default: "gte", Enum: []string{"gte", "lte", "eq"}, Doc: "Comparison."},
+				{Name: "value", Kind: KindNumber, Required: true, Doc: "Number to compare against (int→Int64, float→Float64)."},
+			}},
+			{Kind: "operator", Type: "vec-groupby", Flusher: true, Doc: "Columnar keyed GROUP BY (global; emits on flush).", Params: []Param{
+				{Name: "key", Kind: KindString, Required: true, Doc: "Int64/String key column."},
+				{Name: "agg", Kind: KindString, Default: "count", Doc: "Comma list: count | sum:<f> | sumi:<f> | max:<f>."},
+			}},
+			{Kind: "operator", Type: "vec-tumbling", Flusher: true, Doc: "Columnar event-time tumbling keyed aggregation.", Params: []Param{
+				{Name: "key", Kind: KindString, Required: true, Doc: "Key column."},
+				{Name: "ts", Kind: KindString, Required: true, Doc: "Int64 timestamp column."},
+				{Name: "size", Kind: KindInt, Required: true, Doc: "Window size (ts units)."},
+				{Name: "lateness", Kind: KindInt, Default: 0, Doc: "Allowed lateness (ts units)."},
+				{Name: "agg", Kind: KindString, Default: "count", Doc: "Comma list: count | sum:<f> | sumi:<f> | max:<f>."},
+			}},
+			{Kind: "operator", Type: "vec-sliding", Flusher: true, Doc: "Columnar event-time sliding (hop) keyed aggregation.", Params: []Param{
+				{Name: "key", Kind: KindString, Required: true, Doc: "Key column."},
+				{Name: "ts", Kind: KindString, Required: true, Doc: "Int64 timestamp column."},
+				{Name: "size", Kind: KindInt, Required: true, Doc: "Window size (ts units)."},
+				{Name: "hop", Kind: KindInt, Required: true, Doc: "Slide/hop (ts units)."},
+				{Name: "lateness", Kind: KindInt, Default: 0, Doc: "Allowed lateness (ts units)."},
+				{Name: "agg", Kind: KindString, Default: "count", Doc: "Comma list: count | sum:<f> | sumi:<f> | max:<f>."},
+			}},
+			{Kind: "operator", Type: "vec-session", Flusher: true, Doc: "Columnar event-time session keyed aggregation.", Params: []Param{
+				{Name: "key", Kind: KindString, Required: true, Doc: "Key column."},
+				{Name: "ts", Kind: KindString, Required: true, Doc: "Int64 timestamp column."},
+				{Name: "gap", Kind: KindInt, Required: true, Doc: "Inactivity gap (ts units)."},
+				{Name: "lateness", Kind: KindInt, Default: 0, Doc: "Allowed lateness (ts units)."},
+				{Name: "agg", Kind: KindString, Default: "count", Doc: "Comma list: count | sum:<f> | sumi:<f> | max:<f>."},
+			}},
 		},
 		Sinks: []BlockDef{
 			{Kind: "sink", Type: "memory", Doc: "Collect records in process (inspect via API)."},

@@ -1,0 +1,21 @@
+name: fastlane-groupby
+# Golden path: the columnar fast-lane, declaratively (no Go).
+# row source → to-batch (row→columnar) → vec-groupby → to-rows (columnar→row) → sink.
+source:
+    type: generator
+    fields:
+        merchant: choice:acme|globex|initech
+        amount: rand:int:1:100
+    rate: 1ms
+stages:
+    - label: batch
+      op: to-batch
+      size: 1024
+    - label: groupby
+      op: vec-groupby
+      key: merchant
+      agg: "count, sumi:amount, max:amount"
+    - label: rows
+      op: to-rows
+sink:
+    type: memory

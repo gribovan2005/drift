@@ -111,6 +111,31 @@ Only intentionally row-path features remain off the fast-lane: **schema evolutio
 **permanent non-goal** for the core — that's Flink/Kafka-Streams territory; run N
 independent partition-pipelines instead. See [[Benchmarks]].)
 
+## Product roadmap (post-fast-lane — coherence over new features)
+
+The engine is broad; the next phase closes the gap between **feature breadth** and
+**product depth**. Three levers, in dependency order:
+
+1. **Golden path — columnar operators are declarative (✅ first cut done).** The
+   row↔columnar bridges `vector.FromRows`/`ToRows` plus the `to-batch`/`to-rows`/
+   `vec-filter`/`vec-groupby`/`vec-tumbling`/`vec-sliding`/`vec-session` ops are wired
+   into the YAML job registry + catalog (so they appear in the CLI and web builder
+   palette). A pipeline drops into the fast lane and back with **no Go** —
+   `jobs/fastlane-groupby.yaml` runs `source → to-batch → vec-groupby → to-rows → sink`.
+   **Remaining:** `vec-join`/`vec-streamjoin` in YAML (need build-side/side-tag config),
+   a `vec-map` expression form, and verifying the web builder renders the new blocks.
+2. **Hero feature — live schema evolution, sharpened.** It is the objectively rarest
+   differentiator (competitors require a job restart). Lever 2 makes it the headline:
+   tighten the contract/coverage across the columnar path, and add a focused
+   demo/story that shows a schema change mid-stream with zero downtime.
+3. **One reference end-to-end demo.** A single convincing pipeline — Kafka →
+   `StreamJoin` + windowed aggregation → sink, on the columnar path, with metrics and a
+   schema that changes live — proving speed *and* the differentiators at once. Builds on
+   levers 1 and 2.
+
+These are **integration and narrative** work, not new engine primitives — the goal is
+coherence: make the strongest capabilities reachable and legible.
+
 ## See also
 
 - [[Core Abstractions]]
