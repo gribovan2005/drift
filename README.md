@@ -9,11 +9,12 @@ A streaming data processing engine for Go — with live schema evolution and an 
 brew install gribovan2005/drift/drift
 drift version
 
-# or run the demo with Docker
-docker run -p 8080:8080 ghcr.io/andrejgribov/drift-demo
-```
+# or as a Go library
+go get github.com/gribovan2005/drift/sdk
 
-Open **http://localhost:8080**
+# or run the demo from source
+go run ./cmd/demo            # → http://localhost:8080
+```
 
 ---
 
@@ -39,11 +40,7 @@ Flink is powerful but heavy: JVM, ZooKeeper, cluster ops, schema change = job re
 ## 5-Minute Quickstart
 
 ```bash
-# Option 1: Docker (zero install)
-docker compose up
-# → http://localhost:8080
-
-# Option 2: Build from source
+# Build from source
 go build ./cmd/demo
 ./demo
 # → http://localhost:8080
@@ -104,6 +101,31 @@ curl localhost:8090/stats     # live window aggregates, no database
 curl localhost:8090/metrics   # Prometheus scrape
 # at t+15s the schema evolves live — watch "schema_has_risk_score" flip to true
 ```
+
+---
+
+## Performance & scaling
+
+Drift has a **vectorized fast-lane** (`pkg/vector`) for the stateless hot path:
+columnar `Batch`es of typed values (no `map[string]any`, no boxing, no per-row GC),
+processed in tight per-column loops and carried through the normal pipeline as
+chunk-records. On the same `Filter(even)+Map(+1)` workload it is **~247× faster**
+than the row engine, and over real Kafka (10 partitions, binary columnar codec)
+it sustains **~52M rows/s end-to-end**. Full numbers + honest caveats in
+[`BENCHMARKS.md`](BENCHMARKS.md).
+
+| Lever | API | Effect |
+|---|---|---|
+| Columnar vectorized ops | `vector.MapInt64/FilterInt64/Sum…` | ~247× on Int64/Float64 Map/Filter; String/Bool + Sum/Count/Max too |
+| Binary columnar codec | `vector.EncodeBatch/DecodeBatch`, `vector.KafkaColumnarSource` | decode off the critical path (vs JSON) |
+| Parallel ingestion | `sdk.ParallelSource`, `sdk.KafkaPartitions` | read N partitions/shards concurrently |
+| Per-stage parallelism | `vector.Parallel(n, mk)` / `pipeline.Parallel` | scale a CPU-heavy stage across cores (~5.8× @8) |
+| Resource profiles | `sdk.WithProfile(sdk.Sidecar / sdk.Dedicated)` | tune batch/buffer/linger (+ runtime knobs when it owns the process) |
+
+Runnable demos: `cmd/sdkdemo` (live analytics), `cmd/e2ebench` (in-process
+JSON-vs-binary), `cmd/kafkademo` (real Kafka end-to-end). Scope is honest — the
+fast-lane covers stateless transforms + simple aggregates; windows/joins stay on
+the row engine. See [`drift/Specs/Vectorized Fast-Lane.md`](drift/Specs/Vectorized%20Fast-Lane.md).
 
 ---
 
