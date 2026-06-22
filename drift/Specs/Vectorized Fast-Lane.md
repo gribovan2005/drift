@@ -75,17 +75,39 @@ type Record struct { ... ; Chunk *Batch `json:"chunk,omitempty"` }
 ## Operators (`pkg/vector`, implements `core.Operator`)
 
 ```go
+// Map / Filter (Int64, Float64, String, Bool)
 func MapInt64(field string, fn func(int64) int64) core.Operator
 func FilterInt64(field string, pred func(int64) bool) core.Operator
 func MapFloat64(field string, fn func(float64) float64) core.Operator
 func FilterFloat64(field string, pred func(float64) bool) core.Operator
+func MapString(field string, fn func(string) string) core.Operator
+func FilterString(field string, pred func(string) bool) core.Operator
+func FilterBool(field string, pred func(bool) bool) core.Operator
+
+// Global aggregates (Flusher: accumulate over all chunks, emit one row Record on flush)
+func SumInt64(field, out string) core.Operator
+func SumFloat64(field, out string) core.Operator
+func MaxInt64(field, out string) core.Operator
+func CountRows(out string) core.Operator
+
+// Parallel: run n copies of a stateless op across n goroutines (round-robin chunks)
+func Parallel(n int, mk func() core.Operator) core.Operator
 ```
 
 - Map runs a tight in-place loop over one column across each chunk in the batch.
 - Filter computes the keep set and **compacts all columns** in place (via
-  `copyRow`) then `truncate`s, updating `Batch.Len`. No per-row alloc, no boxing.
+  `CopyRow`) then `Truncate`s, updating `Batch.Len`. No per-row alloc, no boxing.
 - `OnSchemaChange` is a no-op — the schema travels inside each `Batch`.
 - Chunks with `Chunk == nil` (stray row records) pass through untouched.
+- **Aggregates** return nothing during `Process` and emit a single **row** Record
+  (`{out: result}`) on `Flush` — the same pattern as the row windows. The scalar
+  result leaves the columnar world, so it goes to any normal sink. They are
+  **single-stage** — do not wrap an aggregate in `Parallel` (you'd get per-shard
+  partials); only stateless Map/Filter are parallelisable.
+- **`Parallel(n, mk)`** wraps `pipeline.Parallel`: it round-robins whole chunk-
+  records across `n` fresh operators on `n` goroutines, so a CPU-heavy vectorized
+  stage scales with cores (measured ~5.8× at 8 cores; see [[Benchmarks]]). Each
+  chunk goes to exactly one shard, so the in-place mutation stays safe.
 
 ## Source / sink / bridge (`pkg/vector`)
 
@@ -117,12 +139,14 @@ N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-e
 
 ## Scope (honest)
 
-- **In scope:** `Int64` + `Float64` columns; `Map`/`Filter`; columnar mem source +
-  collect/discard sinks + a row bridge. This covers the stateless transform hot
-  path where the throughput claim lives.
-- **Out of scope (stay on the row path):** `String`/`Bool` ops (the `Kind`s exist
-  for forward-compat but have no ops yet), aggregations, windows, joins, schema
-  evolution, JSON sources/sinks, WAL. The fast-lane does **not** replace the engine.
+- **In scope:** `Int64`/`Float64`/`String`/`Bool` columns; `Map`/`Filter`; global
+  aggregates (`Sum`/`Max`/`Count`); per-stage parallelism (`Parallel`); columnar mem
+  source + collect/discard sinks + a row bridge. Covers the stateless transform hot
+  path plus simple `SELECT sum/count/max ... WHERE ...`.
+- **Out of scope (stay on the row path):** windowed/keyed aggregations, joins,
+  schema evolution, WAL. The binary **codec is Int64/Float64 only** — String/Bool
+  columns can't yet cross the binary wire (`EncodeBatch` errors on them). The
+  fast-lane does **not** replace the engine.
 - **Caveats:** vectorized Map/Filter mutate chunks in place — correct for a linear
   pipeline; a fan-out DAG sharing a chunk would need a copy (not provided this
   iteration). Pipeline metrics count chunk-records, not rows. Chunk-records must not

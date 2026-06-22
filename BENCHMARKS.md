@@ -186,6 +186,26 @@ the row path (see [[Vectorized Fast-Lane]]).
 go test ./tests/bench/ -run VectorVsRow -v -count=1
 ```
 
+### Parallel vectorized stage (`vector.Parallel`)
+
+A trivial vectorized map is source-bound, but a CPU-heavy one is stage-bound — and
+`vector.Parallel(n, mk)` round-robins chunks across `n` goroutines to break the
+single-stage ceiling. Heavy map (~µs/row), 2M rows, `GOMAXPROCS=8`:
+
+| shards | rows/sec | vs 1 |
+|---|---:|---:|
+| 1 (single stage) | 0.40 M/s | 1.00× |
+| 2 | 0.77 M/s | 1.94× |
+| 4 | 1.43 M/s | 3.60× |
+| 8 | 2.31 M/s | **5.80×** |
+
+→ Near-linear to 4 cores, ~5.8× at 8 — the vectorized stage scales with cores when
+compute (not the source) is the bound.
+
+```bash
+go test ./tests/bench/ -run VectorParallelStage -v -count=1
+```
+
 ### End-to-end with binary decode (`cmd/e2ebench`)
 
 The fairer test: data arrives **as frames** that are **decoded in the hot path**
