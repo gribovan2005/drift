@@ -51,6 +51,7 @@ type Column struct {
     F64  []float64
     Str  []string
     B    []bool
+    Null []bool   // optional validity mask: Null[i]==true → NULL; nil = no nulls
 }
 
 type Batch struct {
@@ -108,6 +109,7 @@ func (g *WGroup) Op() core.Operator
 // Build-side hash join (enrich a probe stream with a dimension/lookup table)
 func HashJoin(build []*core.Batch, buildKey, probeKey string) *HJoin
 func (j *HJoin) Bring(buildField, outField string) *HJoin
+func (j *HJoin) LeftOuter() *HJoin            // keep unmatched probe rows, NULL brought cells
 func (j *HJoin) Op() core.Operator
 
 // Parallel: run n copies of a stateless op across n goroutines (round-robin chunks)
@@ -157,8 +159,23 @@ func Parallel(n int, mk func() core.Operator) core.Operator
   the `Bring`-requested build columns. **Inner** join — matched probe rows are
   compacted (reusing `CopyRow`/`Truncate`), unmatched dropped; output = probe columns
   + brought columns. Build side is a **lookup table (one row per key**, later builds
-  override) — dimension enrichment, not general M:N; no NULL/left-outer yet. The
-  build table is read-only, so HashJoin **is** safe under `Parallel`.
+  override) — dimension enrichment, not general M:N. The build table is read-only, so
+  HashJoin **is** safe under `Parallel`.
+- **`.LeftOuter()`** switches inner → **left-outer**: every probe row is kept; an
+  unmatched probe row keeps its own columns and gets **NULL** in each brought column
+  (via the column null mask, see below). When every row matches the mask stays nil
+  (zero-overhead — identical to inner). `ToRows` renders a NULL cell as `nil` on the
+  row path. (M:N fan-out still future work — build remains one row per key.)
+
+### NULL columns (validity mask)
+
+`core.Column` carries an optional `Null []bool` mask: `Null[i]==true` marks cell `i`
+as NULL (its typed slot holds a zero to ignore). A **nil** mask means "no nulls" — the
+common case — so every existing all-valid column and every operator that doesn't opt
+in is unchanged and zero-cost. `Batch.IsNull(field)` returns the mask (or nil);
+`CopyRow`/`Truncate` carry the mask so `Filter` compaction stays correct downstream of
+a left-outer join. The binary codec does **not** carry the mask yet: `EncodeBatch`
+*errors* on a null column rather than silently dropping nulls (convert via `ToRows`).
 - **`Parallel(n, mk)`** wraps `pipeline.Parallel`: it round-robins whole chunk-
   records across `n` fresh operators on `n` goroutines, so a CPU-heavy vectorized
   stage scales with cores (measured ~5.8× at 8 cores; see [[Benchmarks]]). Each
@@ -199,16 +216,18 @@ N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-e
   aggregates (`Sum`/`Max`/`Count`); **keyed global GROUP BY** (`GroupBy`) +
   **distributed across lanes** via partials + `MergeOp` (no key-sharding needed) and
   **event-time tumbling keyed aggregation** (`TumblingGroup`, Int64/String keys,
-  int64 ts column); **build-side hash join** (`HashJoin`, dimension enrichment);
-  per-stage parallelism (`Parallel`); columnar mem source + collect/discard sinks +
+  int64 ts column); **build-side hash join** (`HashJoin`, dimension enrichment, inner
+  **and left-outer** via NULL-mask columns); per-stage parallelism (`Parallel`);
+  columnar mem source + collect/discard sinks +
   a row bridge. Covers the stateless hot path plus
   `SELECT [tumble(ts,size),] key, count/sum/max ..., dim.attr [WHERE ...]
   [JOIN dim] [GROUP BY ...]`.
-- **Out of scope (stay on the row path):** stream-stream (mixed) joins,
-  left-outer/M:N joins, sliding/session windows, schema evolution, WAL. The binary
-  codec covers all four column kinds
-  (Int64/Float64 fixed-width, Bool 1 byte, String length-prefixed). The fast-lane
-  does **not** replace the engine.
+- **Out of scope (stay on the row path):** stream-stream (mixed) joins, **M:N** joins
+  (build is one row per key), sliding/session windows, schema evolution, WAL. The
+  binary codec covers all four column kinds
+  (Int64/Float64 fixed-width, Bool 1 byte, String length-prefixed) but **not** the NULL
+  mask yet (`EncodeBatch` errors on a null column). The fast-lane does **not** replace
+  the engine.
 - **Caveats:** vectorized Map/Filter mutate chunks in place — correct for a linear
   pipeline; a fan-out DAG sharing a chunk would need a copy (not provided this
   iteration). Chunk-records must not hit JSON/row sinks directly — use `ToRows` first.
