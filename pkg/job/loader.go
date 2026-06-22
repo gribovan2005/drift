@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/gribovan2005/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/sdk"
 )
 
 // Load parses a YAML job definition and builds runnable components. It validates
@@ -17,6 +18,12 @@ func Load(data []byte) (*Built, error) {
 
 	if err := validateStructure(spec); err != nil {
 		return nil, err
+	}
+
+	if spec.Profile != "" {
+		if _, ok := sdk.ProfileByName(spec.Profile); !ok {
+			return nil, fmt.Errorf("job %q: unknown profile %q (want sidecar|dedicated)", spec.Name, spec.Profile)
+		}
 	}
 
 	src, err := buildSource(spec.Source)

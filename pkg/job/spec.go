@@ -9,6 +9,7 @@ import (
 
 	"github.com/gribovan2005/drift/pkg/core"
 	"github.com/gribovan2005/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/sdk"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,10 +18,15 @@ import (
 // format used by the web builder; note that encoding/json does not honour yaml's
 // ",inline", so params are a nested object on the wire and inline in the file.
 type Spec struct {
-	Name   string        `yaml:"name" json:"name"`
-	Source ComponentSpec `yaml:"source" json:"source"`
-	Stages []StageSpec   `yaml:"stages" json:"stages"`
-	Sink   ComponentSpec `yaml:"sink" json:"sink"`
+	Name string `yaml:"name" json:"name"`
+	// Profile is an optional resource profile ("sidecar"/"dedicated") that tunes the
+	// pipeline's local knobs (batch size, channel buffer, max-linger). Empty = engine
+	// defaults. Process-global knobs (GOMAXPROCS/GOGC) are NOT applied from a job, to
+	// avoid one job re-tuning the whole server. See drift/Specs/Resource Profiles.md.
+	Profile string        `yaml:"profile,omitempty" json:"profile,omitempty"`
+	Source  ComponentSpec `yaml:"source" json:"source"`
+	Stages  []StageSpec   `yaml:"stages" json:"stages"`
+	Sink    ComponentSpec `yaml:"sink" json:"sink"`
 }
 
 // ComponentSpec describes a source or sink: a type plus free-form params.
@@ -51,8 +57,15 @@ type Built struct {
 	Sink   core.Sink
 }
 
-// Pipeline assembles a runnable pipeline from the built components.
+// Pipeline assembles a runnable pipeline from the built components. If the spec
+// declares a profile, its local options (batch/buffer/linger) are applied first so
+// caller-supplied opts can still override them.
 func (b *Built) Pipeline(opts ...pipeline.Option) *pipeline.Pipeline {
+	if b.Spec.Profile != "" {
+		if p, ok := sdk.ProfileByName(b.Spec.Profile); ok {
+			opts = append(p.PipelineOptions(), opts...)
+		}
+	}
 	return pipeline.New(b.Source, b.Stages, b.Sink, opts...)
 }
 

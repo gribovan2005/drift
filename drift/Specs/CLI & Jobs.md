@@ -23,6 +23,7 @@ host program populates before calling the loader.
 
 ```yaml
 name: fraud
+profile: sidecar         # optional: sidecar | dedicated — tunes batch/buffer/linger ([[Resource Profiles]])
 source:
   type: generator        # generator | memory | http | ref:<name>
   rate: 1ms
@@ -49,6 +50,9 @@ sink:
 - `stages[].next` wires the DAG (same semantics as `pipeline.Stage.Next`). When
   omitted, stages run in declaration order (linear).
 - `name` is used for logs and lineage.
+- `profile` (optional) applies a resource preset's local knobs (batch/buffer/linger)
+  via `sdk.ProfileByName`; unknown values fail validation. Process-global knobs are
+  not applied from a job. See [[Resource Profiles]].
 
 ---
 
