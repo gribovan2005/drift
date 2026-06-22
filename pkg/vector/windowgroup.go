@@ -27,11 +27,27 @@ func TumblingGroup(keyField, tsField string, size int64) *WGroup {
 	return &WGroup{keyField: keyField, tsField: tsField, size: size}
 }
 
-// WGroup is the tumbling group-by builder.
+// SlidingGroup builds a vectorized, keyed, EVENT-TIME sliding (hop) aggregation: each
+// row at ts contributes to every window [s, s+size) whose hop-aligned start s falls in
+// (ts-size, ts], so consecutive windows overlap by size-hop. It is TumblingGroup
+// generalised — tumbling is the special case hop == size (each row hits one window).
+// Watermark/late-drop/periodic-emit/Flush semantics are identical; only the per-row
+// window assignment fans out. `size` and `hop` are int64 in the ts column's unit.
+//
+//	sdk.New().From(src).
+//	    Apply(vector.SlidingGroup("merchant", "ts", 60000, 10000).Lateness(5000).
+//	        Count("n").Op()).
+//	    To(vector.Collect()).Run(ctx)
+//	// → result chunks: columns [ts(window start), merchant, n], a row per (window,key)
+func SlidingGroup(keyField, tsField string, size, hop int64) *WGroup {
+	return &WGroup{keyField: keyField, tsField: tsField, size: size, hop: hop}
+}
+
+// WGroup is the tumbling/sliding group-by builder.
 type WGroup struct {
-	keyField, tsField string
-	size, lateness    int64
-	aggs              []aggSpec
+	keyField, tsField   string
+	size, hop, lateness int64
+	aggs                []aggSpec
 }
 
 // Lateness sets allowed lateness (same unit as the ts column). Default 0.
@@ -61,11 +77,15 @@ func (g *WGroup) MaxInt64(valField, out string) *WGroup {
 	return g
 }
 
-// Op builds the tumbling group-by operator.
+// Op builds the tumbling/sliding group-by operator. hop defaults to size (tumbling).
 func (g *WGroup) Op() core.Operator {
+	hop, name := g.hop, "SlidingGroup"
+	if hop == 0 {
+		hop, name = g.size, "TumblingGroup"
+	}
 	return &windowOp{
-		keyField: g.keyField, tsField: g.tsField, size: g.size, lateness: g.lateness,
-		aggs: g.aggs, windows: make(map[int64]*winState),
+		keyField: g.keyField, tsField: g.tsField, size: g.size, hop: hop, lateness: g.lateness,
+		name: name, aggs: g.aggs, windows: make(map[int64]*winState),
 	}
 }
 
@@ -76,9 +96,10 @@ type winState struct {
 }
 
 type windowOp struct {
-	keyField, tsField string
-	size, lateness    int64
-	aggs              []aggSpec
+	keyField, tsField   string
+	size, hop, lateness int64
+	name                string
+	aggs                []aggSpec
 
 	started     bool
 	strKey      bool
@@ -101,6 +122,17 @@ func windowStart(ts, size int64) int64 {
 	return q * size
 }
 
+// startsFor returns every hop-aligned window start s with ts ∈ [s, s+size), i.e. s in
+// (ts-size, ts], descending. For hop == size this is the single tumbling window.
+func (o *windowOp) startsFor(ts int64) []int64 {
+	last := windowStart(ts, o.hop) // largest hop-aligned start ≤ ts
+	var starts []int64
+	for s := last; s > ts-o.size; s -= o.hop {
+		starts = append(starts, s)
+	}
+	return starts
+}
+
 func (o *windowOp) newWinState() *winState {
 	if o.strKey {
 		return &winState{ms: make(map[string]*acc)}
@@ -110,7 +142,10 @@ func (o *windowOp) newWinState() *winState {
 
 func (o *windowOp) Process(in []core.Record) ([]core.Record, error) {
 	if o.size <= 0 {
-		return nil, fmt.Errorf("vector: TumblingGroup size must be ≥ 1, got %d", o.size)
+		return nil, fmt.Errorf("vector: %s size must be ≥ 1, got %d", o.name, o.size)
+	}
+	if o.hop <= 0 {
+		return nil, fmt.Errorf("vector: %s hop must be ≥ 1, got %d", o.name, o.hop)
 	}
 	var out []core.Record
 	for _, r := range in {
@@ -120,20 +155,20 @@ func (o *windowOp) Process(in []core.Record) ([]core.Record, error) {
 		}
 		ts := b.Int64(o.tsField)
 		if ts == nil {
-			return nil, fmt.Errorf("vector: TumblingGroup ts field %q not an int64 column", o.tsField)
+			return nil, fmt.Errorf("vector: %s ts field %q not an int64 column", o.name, o.tsField)
 		}
 		ikeys := b.Int64(o.keyField)
 		skeys := b.String(o.keyField)
 		if ikeys == nil && skeys == nil {
-			return nil, fmt.Errorf("vector: TumblingGroup key %q missing or not Int64/String", o.keyField)
+			return nil, fmt.Errorf("vector: %s key %q missing or not Int64/String", o.name, o.keyField)
 		}
 		strKey := skeys != nil
 		if !o.started {
 			o.strKey, o.started = strKey, true
 		} else if strKey != o.strKey {
-			return nil, fmt.Errorf("vector: TumblingGroup key %q kind changed between chunks", o.keyField)
+			return nil, fmt.Errorf("vector: %s key %q kind changed between chunks", o.name, o.keyField)
 		}
-		i64cols, f64cols, err := fetchAggCols(b, o.aggs, "TumblingGroup")
+		i64cols, f64cols, err := fetchAggCols(b, o.aggs, o.name)
 		if err != nil {
 			return nil, err
 		}
@@ -148,32 +183,35 @@ func (o *windowOp) Process(in []core.Record) ([]core.Record, error) {
 		wm := o.maxSeen - o.lateness
 
 		for i := 0; i < b.Len; i++ {
-			start := windowStart(ts[i], o.size)
-			// Late: window already fired in a previous batch. Windows that close
-			// within this batch are still accepted (aggregated before fireClosed).
-			if o.firedSet && start+o.size <= o.firedUpTo {
-				o.lateDropped++
-				continue
-			}
-			ws := o.windows[start]
-			if ws == nil {
-				ws = o.newWinState()
-				o.windows[start] = ws
-			}
-			if strKey {
-				a := ws.ms[skeys[i]]
-				if a == nil {
-					a = newAggAcc(len(o.aggs))
-					ws.ms[skeys[i]] = a
+			// A row may fall in several overlapping windows (sliding); for tumbling
+			// startsFor yields exactly one.
+			for _, start := range o.startsFor(ts[i]) {
+				// Late: window already fired in a previous batch. Windows that close
+				// within this batch are still accepted (aggregated before fireClosed).
+				if o.firedSet && start+o.size <= o.firedUpTo {
+					o.lateDropped++
+					continue
 				}
-				applyAggs(a, o.aggs, i, i64cols, f64cols)
-			} else {
-				a := ws.mi[ikeys[i]]
-				if a == nil {
-					a = newAggAcc(len(o.aggs))
-					ws.mi[ikeys[i]] = a
+				ws := o.windows[start]
+				if ws == nil {
+					ws = o.newWinState()
+					o.windows[start] = ws
 				}
-				applyAggs(a, o.aggs, i, i64cols, f64cols)
+				if strKey {
+					a := ws.ms[skeys[i]]
+					if a == nil {
+						a = newAggAcc(len(o.aggs))
+						ws.ms[skeys[i]] = a
+					}
+					applyAggs(a, o.aggs, i, i64cols, f64cols)
+				} else {
+					a := ws.mi[ikeys[i]]
+					if a == nil {
+						a = newAggAcc(len(o.aggs))
+						ws.mi[ikeys[i]] = a
+					}
+					applyAggs(a, o.aggs, i, i64cols, f64cols)
+				}
 			}
 		}
 
