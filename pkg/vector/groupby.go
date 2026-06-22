@@ -90,8 +90,97 @@ type groupOp struct {
 	ms      map[string]*acc
 }
 
-func (o *groupOp) newAcc() *acc {
-	return &acc{i64: make([]int64, len(o.aggs)), f64: make([]float64, len(o.aggs)), seen: make([]bool, len(o.aggs))}
+// ── shared aggregate helpers (used by groupOp and windowOp) ────────────────
+
+// newAggAcc allocates an accumulator sized for n aggregates.
+func newAggAcc(n int) *acc {
+	return &acc{i64: make([]int64, n), f64: make([]float64, n), seen: make([]bool, n)}
+}
+
+// fetchAggCols resolves each aggregate's value column from b (once per chunk).
+// who names the operator for error messages.
+func fetchAggCols(b *core.Batch, aggs []aggSpec, who string) ([][]int64, [][]float64, error) {
+	i64cols := make([][]int64, len(aggs))
+	f64cols := make([][]float64, len(aggs))
+	for j, a := range aggs {
+		switch a.kind {
+		case aggSumInt64, aggMaxInt64:
+			c := b.Int64(a.valField)
+			if c == nil {
+				return nil, nil, fmt.Errorf("vector: %s agg field %q not an int64 column", who, a.valField)
+			}
+			i64cols[j] = c
+		case aggSumFloat64:
+			c := b.Float64(a.valField)
+			if c == nil {
+				return nil, nil, fmt.Errorf("vector: %s agg field %q not a float64 column", who, a.valField)
+			}
+			f64cols[j] = c
+		}
+	}
+	return i64cols, f64cols, nil
+}
+
+// applyAggs folds row i of the value columns into accumulator a.
+func applyAggs(a *acc, aggs []aggSpec, i int, i64cols [][]int64, f64cols [][]float64) {
+	a.count++
+	for j, ag := range aggs {
+		switch ag.kind {
+		case aggSumInt64:
+			a.i64[j] += i64cols[j][i]
+		case aggSumFloat64:
+			a.f64[j] += f64cols[j][i]
+		case aggMaxInt64:
+			v := i64cols[j][i]
+			if !a.seen[j] || v > a.i64[j] {
+				a.i64[j], a.seen[j] = v, true
+			}
+		case aggCount:
+			// counted via a.count
+		}
+	}
+}
+
+// aggFields returns the output Field for each aggregate column.
+func aggFields(aggs []aggSpec) []core.Field {
+	out := make([]core.Field, len(aggs))
+	for j, a := range aggs {
+		t := core.FieldTypeInt
+		if a.kind == aggSumFloat64 {
+			t = core.FieldTypeFloat
+		}
+		out[j] = core.Field{Name: a.out, Type: t}
+	}
+	return out
+}
+
+// aggColumns builds one column per aggregate from accumulators in row order.
+func aggColumns(aggs []aggSpec, accs []*acc) []core.Column {
+	cols := make([]core.Column, len(aggs))
+	n := len(accs)
+	for j, a := range aggs {
+		switch a.kind {
+		case aggSumFloat64:
+			v := make([]float64, n)
+			for i, ac := range accs {
+				v[i] = ac.f64[j]
+			}
+			cols[j] = core.Column{Kind: core.KindFloat64, F64: v}
+		case aggCount:
+			v := make([]int64, n)
+			for i, ac := range accs {
+				v[i] = ac.count
+			}
+			cols[j] = core.Column{Kind: core.KindInt64, I64: v}
+		default: // SumInt64 / MaxInt64
+			v := make([]int64, n)
+			for i, ac := range accs {
+				v[i] = ac.i64[j]
+			}
+			cols[j] = core.Column{Kind: core.KindInt64, I64: v}
+		}
+	}
+	return cols
 }
 
 func (o *groupOp) OnSchemaChange(core.Schema) {}
@@ -120,83 +209,41 @@ func (o *groupOp) Process(in []core.Record) ([]core.Record, error) {
 			return nil, fmt.Errorf("vector: GroupBy key %q kind changed between chunks", o.keyField)
 		}
 
-		// Fetch each agg's value column once per chunk.
-		i64cols := make([][]int64, len(o.aggs))
-		f64cols := make([][]float64, len(o.aggs))
-		for j, a := range o.aggs {
-			switch a.kind {
-			case aggSumInt64, aggMaxInt64:
-				c := b.Int64(a.valField)
-				if c == nil {
-					return nil, fmt.Errorf("vector: GroupBy agg field %q not an int64 column", a.valField)
-				}
-				i64cols[j] = c
-			case aggSumFloat64:
-				c := b.Float64(a.valField)
-				if c == nil {
-					return nil, fmt.Errorf("vector: GroupBy agg field %q not a float64 column", a.valField)
-				}
-				f64cols[j] = c
-			}
+		i64cols, f64cols, err := fetchAggCols(b, o.aggs, "GroupBy")
+		if err != nil {
+			return nil, err
 		}
 
 		if strKey {
 			for i := 0; i < b.Len; i++ {
 				a := o.ms[skeys[i]]
 				if a == nil {
-					a = o.newAcc()
+					a = newAggAcc(len(o.aggs))
 					o.ms[skeys[i]] = a
 				}
-				o.update(a, i, i64cols, f64cols)
+				applyAggs(a, o.aggs, i, i64cols, f64cols)
 			}
 		} else {
 			for i := 0; i < b.Len; i++ {
 				a := o.mi[ikeys[i]]
 				if a == nil {
-					a = o.newAcc()
+					a = newAggAcc(len(o.aggs))
 					o.mi[ikeys[i]] = a
 				}
-				o.update(a, i, i64cols, f64cols)
+				applyAggs(a, o.aggs, i, i64cols, f64cols)
 			}
 		}
 	}
 	return nil, nil
 }
 
-func (o *groupOp) update(a *acc, i int, i64cols [][]int64, f64cols [][]float64) {
-	a.count++
-	for j, ag := range o.aggs {
-		switch ag.kind {
-		case aggSumInt64:
-			a.i64[j] += i64cols[j][i]
-		case aggSumFloat64:
-			a.f64[j] += f64cols[j][i]
-		case aggMaxInt64:
-			v := i64cols[j][i]
-			if !a.seen[j] || v > a.i64[j] {
-				a.i64[j], a.seen[j] = v, true
-			}
-		case aggCount:
-			// counted via a.count
-		}
-	}
-}
-
 func (o *groupOp) Flush() ([]core.Record, error) {
 	// Schema: key column + one column per aggregate.
-	fields := make([]core.Field, 0, 1+len(o.aggs))
 	keyType := core.FieldTypeString
 	if o.started && !o.strKey {
 		keyType = core.FieldTypeInt
 	}
-	fields = append(fields, core.Field{Name: o.keyField, Type: keyType})
-	for _, a := range o.aggs {
-		t := core.FieldTypeInt
-		if a.kind == aggSumFloat64 {
-			t = core.FieldTypeFloat
-		}
-		fields = append(fields, core.Field{Name: a.out, Type: t})
-	}
+	fields := append([]core.Field{{Name: o.keyField, Type: keyType}}, aggFields(o.aggs)...)
 
 	// Collect rows in sorted key order, gathering each key's accumulator.
 	var n int
@@ -226,7 +273,6 @@ func (o *groupOp) Flush() ([]core.Record, error) {
 	}
 
 	cols := make([]core.Column, len(fields))
-	// key column
 	if keyType == core.FieldTypeInt {
 		cols[0] = core.Column{Kind: core.KindInt64, I64: keyI64}
 	} else {
@@ -235,29 +281,7 @@ func (o *groupOp) Flush() ([]core.Record, error) {
 		}
 		cols[0] = core.Column{Kind: core.KindString, Str: keyStr}
 	}
-	// aggregate columns
-	for j, a := range o.aggs {
-		switch a.kind {
-		case aggSumFloat64:
-			v := make([]float64, n)
-			for i, ac := range accs {
-				v[i] = ac.f64[j]
-			}
-			cols[j+1] = core.Column{Kind: core.KindFloat64, F64: v}
-		case aggCount:
-			v := make([]int64, n)
-			for i, ac := range accs {
-				v[i] = ac.count
-			}
-			cols[j+1] = core.Column{Kind: core.KindInt64, I64: v}
-		default: // SumInt64 / MaxInt64
-			v := make([]int64, n)
-			for i, ac := range accs {
-				v[i] = ac.i64[j]
-			}
-			cols[j+1] = core.Column{Kind: core.KindInt64, I64: v}
-		}
-	}
+	copy(cols[1:], aggColumns(o.aggs, accs))
 
 	return []core.Record{{Chunk: &core.Batch{Schema: core.Schema{Fields: fields}, Len: n, Cols: cols}}}, nil
 }

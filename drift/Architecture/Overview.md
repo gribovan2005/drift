@@ -84,13 +84,13 @@ stream engine". All shipped:
 | **Prometheus metrics export** | ✅ done | dependency-free text exposition over `pipeline.Snapshot()`; `sdk.PrometheusHandler`, auth-exempt `GET /metrics`. See [[Metrics Export]] |
 | **Resource profiles** | ✅ done | `Sidecar`/`Dedicated` presets (batch/buffer/linger + opt-in process-global knobs); SDK (`WithProfile`) **and** YAML/runner (`profile:` field). See [[Resource Profiles]] |
 | **Parallel / sharded source** | ✅ done | `source.NewParallel` + Kafka partition-pinned readers (`KafkaPartitions`) lift the single-reader ingestion ceiling. See [[Parallel Source]] |
-| **Vectorized fast-lane** | ✅ done | columnar `core.Batch` carried as chunk-records; Int64/Float64/String/Bool `Map`/`Filter` + global `Sum`/`Count`/`Max` + **keyed `GroupBy`** (Int64/String keys, count/sum/max); binary codec (all four kinds) + `KafkaColumnarSource`; `vector.Parallel` per-stage scaling; row-accurate metrics. **~247× on the stateless hot path, ~24× on group-by, ~52M rows/s over real Kafka.** See [[Vectorized Fast-Lane]], [[Benchmarks]] |
+| **Vectorized fast-lane** | ✅ done | columnar `core.Batch` carried as chunk-records; Int64/Float64/String/Bool `Map`/`Filter` + global `Sum`/`Count`/`Max` + **keyed `GroupBy`** + **event-time `TumblingGroup`** (watermark, periodic emit; Int64/String keys); binary codec (all four kinds) + `KafkaColumnarSource`; `vector.Parallel` per-stage scaling; row-accurate metrics. **~247× on the stateless hot path, ~24× on group-by, ~52M rows/s over real Kafka.** See [[Vectorized Fast-Lane]], [[Benchmarks]] |
 
 ### Next (not yet built — explicit scope, not bugs)
 
-- **Vectorized *windowed* keyed aggregations + joins** — keyed **global** group-by
-  is done (`vector.GroupBy`); windowed (periodic-emit) keyed aggregation and joins
-  stay on the row (`map[string]any`) engine.
+- **Vectorized joins** — columnar Map/Filter, global + keyed `GroupBy`, and
+  event-time tumbling keyed aggregation (`TumblingGroup`) are done; stream **joins**
+  and sliding/session windows stay on the row (`map[string]any`) engine.
 - **Raise the single-node ceiling further** — parallelise the vectorized *sink* and
   source-side decode; the current end-to-end cap is the single source goroutine and
   single terminal stage, not compute.
