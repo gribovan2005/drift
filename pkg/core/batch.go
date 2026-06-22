@@ -50,6 +50,24 @@ func (b *Batch) Float64(field string) []float64 {
 	return b.Cols[i].F64[:b.Len]
 }
 
+// String returns the named string column, or nil if missing or not string.
+func (b *Batch) String(field string) []string {
+	i := b.Schema.FieldIndex(field)
+	if i < 0 || i >= len(b.Cols) || b.Cols[i].Kind != KindString {
+		return nil
+	}
+	return b.Cols[i].Str[:b.Len]
+}
+
+// Bool returns the named bool column, or nil if missing or not bool.
+func (b *Batch) Bool(field string) []bool {
+	i := b.Schema.FieldIndex(field)
+	if i < 0 || i >= len(b.Cols) || b.Cols[i].Kind != KindBool {
+		return nil
+	}
+	return b.Cols[i].B[:b.Len]
+}
+
 // CopyRow copies row src to row dst across every column, keeping columns aligned.
 // Used by vectorized Filter to compact in place.
 func (b *Batch) CopyRow(dst, src int) {
