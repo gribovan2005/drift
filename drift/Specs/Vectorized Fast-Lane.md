@@ -261,9 +261,11 @@ N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-e
   (Int64/Float64 fixed-width, Bool 1 byte, String length-prefixed) but **not** the NULL
   mask yet (`EncodeBatch` errors on a null column). The fast-lane does **not** replace
   the engine.
-- **Caveats:** vectorized Map/Filter mutate chunks in place — correct for a linear
-  pipeline; a fan-out DAG sharing a chunk would need a copy (not provided this
-  iteration). Chunk-records must not hit JSON/row sinks directly — use `ToRows` first.
+- **Caveats:** vectorized Map/Filter/join mutate chunks in place — correct for a linear
+  pipeline; on a **fan-out DAG** the executor deep-copies the chunk per branch
+  (`core.Batch.Clone` in `broadcastAll`), so branches can mutate independently. Linear
+  edges (one downstream) pass through with no copy. Chunk-records must not hit JSON/row
+  sinks directly — use `ToRows` first.
 - Pipeline metrics are **row-accurate** for chunk-records: `runStage` counts
   `Batch.Len` rows per chunk (not 1 per chunk-record), so ProcessedTotal/throughput
   reflect real rows.

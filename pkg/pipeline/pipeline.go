@@ -341,12 +341,20 @@ func rootLabels(stages []Stage, pred map[string][]string) []string {
 
 // broadcastAll reads from src and copies each record to every dst.
 // Closes all dsts when src is exhausted or ctx is cancelled.
+//
+// On true fan-out (more than one dst) a chunk-record's *core.Batch is deep-copied per
+// branch: vectorized operators mutate batches in place, so sharing one batch across
+// branches would corrupt siblings. Every branch (including the first) gets its own
+// clone of the never-handed-out source batch, so a downstream consumer can never race
+// the cloning of a sibling's copy. Linear edges (one dst) pass the record through
+// untouched — the common path stays allocation-free.
 func broadcastAll(ctx context.Context, src <-chan core.Record, dsts []chan core.Record) {
 	defer func() {
 		for _, dst := range dsts {
 			close(dst)
 		}
 	}()
+	fanOut := len(dsts) > 1
 	for {
 		select {
 		case r, ok := <-src:
@@ -354,8 +362,12 @@ func broadcastAll(ctx context.Context, src <-chan core.Record, dsts []chan core.
 				return
 			}
 			for _, dst := range dsts {
+				rec := r
+				if fanOut && r.Chunk != nil {
+					rec.Chunk = r.Chunk.Clone()
+				}
 				select {
-				case dst <- r:
+				case dst <- rec:
 				case <-ctx.Done():
 					return
 				}
