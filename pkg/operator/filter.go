@@ -1,6 +1,6 @@
 package operator
 
-import "github.com/andrejgribov/drift/pkg/core"
+import "github.com/gribovan2005/drift/pkg/core"
 
 // PredicateFunc returns true if the record should pass through.
 type PredicateFunc func(core.Record) bool

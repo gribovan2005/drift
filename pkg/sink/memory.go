@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // Memory collects all records written to it. Safe for concurrent reads

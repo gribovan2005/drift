@@ -9,7 +9,7 @@
 package nexmark
 
 import (
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // channels mimics the Nexmark bid "channel" dimension.

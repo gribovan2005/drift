@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/andrejgribov/drift/pkg/wal"
+	"github.com/gribovan2005/drift/pkg/wal"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/metrics"
+	"github.com/gribovan2005/drift/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/job"
-	"github.com/andrejgribov/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/job"
+	"github.com/gribovan2005/drift/pkg/pipeline"
 )
 
 // tapSize is how many recent records per stage the runner retains for the UI.

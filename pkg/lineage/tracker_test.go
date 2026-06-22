@@ -5,9 +5,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/lineage"
-	"github.com/andrejgribov/drift/pkg/operator"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/lineage"
+	"github.com/gribovan2005/drift/pkg/operator"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

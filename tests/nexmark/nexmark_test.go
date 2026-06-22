@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/pipeline"
-	"github.com/andrejgribov/drift/pkg/sink"
-	"github.com/andrejgribov/drift/pkg/source"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/pkg/sink"
+	"github.com/gribovan2005/drift/pkg/source"
 )
 
 // runQuery runs a query's stages over the given events and returns wall-clock
@@ -48,6 +48,9 @@ func runQuery(tb testing.TB, q Query, events int) (time.Duration, pipeline.Graph
 func TestNexmarkThroughput(t *testing.T) {
 	if testing.Short() {
 		t.Skip("throughput run skipped in -short")
+	}
+	if raceEnabled {
+		t.Skip("throughput run skipped under -race (instrumentation distorts timing and exceeds CI timeouts)")
 	}
 	const events = 2_000_000
 

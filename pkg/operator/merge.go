@@ -1,6 +1,6 @@
 package operator
 
-import "github.com/andrejgribov/drift/pkg/core"
+import "github.com/gribovan2005/drift/pkg/core"
 
 // Merge combines records from the pipeline primary stream (via Process) with
 // records arriving on an extra channel. On each Process call the extra channel

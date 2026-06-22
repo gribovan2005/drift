@@ -5,3 +5,7 @@ dist/
 
 # stray binary built inside the vault folder
 /drift/drift
+
+# stray binaries from `go build ./cmd/...` at the repo root
+/demo
+/sdkdemo

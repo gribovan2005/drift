@@ -16,14 +16,14 @@ import (
 	"sort"
 	"syscall"
 
-	"github.com/andrejgribov/drift/internal/dotenv"
-	"github.com/andrejgribov/drift/pkg/ai"
-	"github.com/andrejgribov/drift/pkg/job"
-	"github.com/andrejgribov/drift/pkg/lineage"
-	"github.com/andrejgribov/drift/pkg/pipeline"
-	"github.com/andrejgribov/drift/pkg/runner"
-	"github.com/andrejgribov/drift/pkg/schema"
-	"github.com/andrejgribov/drift/pkg/web"
+	"github.com/gribovan2005/drift/internal/dotenv"
+	"github.com/gribovan2005/drift/pkg/ai"
+	"github.com/gribovan2005/drift/pkg/job"
+	"github.com/gribovan2005/drift/pkg/lineage"
+	"github.com/gribovan2005/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/pkg/runner"
+	"github.com/gribovan2005/drift/pkg/schema"
+	"github.com/gribovan2005/drift/pkg/web"
 )
 
 // Build metadata, injected at release time via -ldflags by GoReleaser.

@@ -3,7 +3,7 @@ package operator
 import (
 	"sync"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // AliasMap maps old field names to their new names after a rename.

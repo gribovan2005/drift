@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/dlq"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/dlq"
 	kafka "github.com/segmentio/kafka-go"
 )
 

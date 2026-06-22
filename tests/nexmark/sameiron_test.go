@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/pipeline"
 )
 
 // boundedBidSource generates n bid records on the fly (no rate limit) then closes.
@@ -55,6 +55,9 @@ func (d *discardSink) Write(ctx context.Context, ch <-chan core.Record) error {
 func TestSameIron(t *testing.T) {
 	if testing.Short() {
 		t.Skip("same-iron run skipped in -short")
+	}
+	if raceEnabled {
+		t.Skip("same-iron run skipped under -race (instrumentation distorts timing and exceeds CI timeouts)")
 	}
 	const events = 50_000_000
 

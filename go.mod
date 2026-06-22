@@ -1,4 +1,4 @@
-module github.com/andrejgribov/drift
+module github.com/gribovan2005/drift
 
 go 1.26.1
 

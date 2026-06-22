@@ -7,8 +7,8 @@ package job
 import (
 	"fmt"
 
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/pipeline"
 
 	"gopkg.in/yaml.v3"
 )

@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/sink"
-	"github.com/andrejgribov/drift/pkg/source"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/sink"
+	"github.com/gribovan2005/drift/pkg/source"
 )
 
 // buildSource constructs a core.Source from a component spec. "ref:<name>"

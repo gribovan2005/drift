@@ -1,6 +1,6 @@
 package operator
 
-import "github.com/andrejgribov/drift/pkg/core"
+import "github.com/gribovan2005/drift/pkg/core"
 
 // MapFunc transforms a single Record into another Record.
 type MapFunc func(core.Record) (core.Record, error)

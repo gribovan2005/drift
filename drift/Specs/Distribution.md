@@ -48,12 +48,13 @@ Install: `brew install gribovan2005/drift/drift`.
 2. Add Actions secret `HOMEBREW_TAP_GITHUB_TOKEN` (PAT with tap write access) to
    the `drift` repo.
 
-## Module-path note
+## Module path
 
-`go.mod` is `github.com/andrejgribov/drift` while the GitHub remote is
-`gribovan2005/drift`. GoReleaser builds from the local checkout, so this does
-**not** affect Homebrew. It would only break `go install github.com/...@latest`;
-rename the module if that channel is wanted later.
+`go.mod` is `github.com/gribovan2005/drift`, matching the GitHub remote, so
+`go get github.com/gribovan2005/drift` and `go install .../cmd/drift@latest`
+both work. (Was `andrejgribov/drift` until the library SDK landed; renamed so the
+package is importable.) GoReleaser builds from the local checkout, so the path is
+independent of the Homebrew pipeline.
 
 ## Local dry-run
 

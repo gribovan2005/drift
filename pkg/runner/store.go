@@ -11,7 +11,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/job"
+	"github.com/gribovan2005/drift/pkg/job"
 )
 
 // nameRe restricts job names to filesystem-safe characters, guarding against

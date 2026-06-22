@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // ValueFunc extracts the ordering value of a record for ranking (higher = better).

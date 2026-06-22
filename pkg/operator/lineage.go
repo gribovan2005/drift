@@ -1,6 +1,6 @@
 package operator
 
-import "github.com/andrejgribov/drift/pkg/core"
+import "github.com/gribovan2005/drift/pkg/core"
 
 // withParents stamps an aggregate output with the lineage IDs of the records
 // that produced it, giving aggregating operators exact (per-window, not

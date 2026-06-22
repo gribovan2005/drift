@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/core"
 )
 
 // HTTP POSTs each record as a JSON object to URL.

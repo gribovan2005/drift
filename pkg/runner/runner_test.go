@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/runner"
+	"github.com/gribovan2005/drift/pkg/runner"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

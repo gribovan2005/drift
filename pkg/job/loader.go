@@ -3,7 +3,7 @@ package job
 import (
 	"fmt"
 
-	"github.com/andrejgribov/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/pkg/pipeline"
 )
 
 // Load parses a YAML job definition and builds runnable components. It validates

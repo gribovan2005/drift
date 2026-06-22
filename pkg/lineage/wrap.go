@@ -1,6 +1,6 @@
 package lineage
 
-import "github.com/andrejgribov/drift/pkg/core"
+import "github.com/gribovan2005/drift/pkg/core"
 
 // Wrap returns an operator decorator that records provenance for every record
 // flowing through op under the given stage label. The returned value preserves
