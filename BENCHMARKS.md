@@ -241,6 +241,29 @@ columns by index, compact matched rows). Inner / dimension-enrichment semantics.
 go test ./tests/bench/ -run VectorJoin -v -count=1
 ```
 
+### Full parallel lane — raising the single-node ceiling (`MaxLane`)
+
+End-to-end columnar lane with **every serial point parallelised**: parallel decode
+(`source.NewParallel` of `BinSource`) → parallel compute (`vector.Parallel`) →
+parallel sink (`sink.Parallel`). Compute-bound map, 4M rows, GOMAXPROCS=8:
+
+| shards | rows/sec | vs 1 |
+|---|---:|---:|
+| 1 | 2.11 M/s | 1.00× |
+| 2 | 4.11 M/s | 1.95× |
+| 4 | 7.44 M/s | 3.53× |
+| 8 | 11.42 M/s | **5.42×** |
+
+→ The end-to-end ceiling now rises with cores (near-linear to 4, ~5.4× at 8) once
+decode, compute, **and** the sink are all parallel — the single-sink goroutine was
+the last serial point. Remaining sublinearity is per-chunk channel coordination +
+scheduler. (Beyond this, fully independent N-lane pipelines avoid the shared channel
+entirely — a larger change.)
+
+```bash
+go test ./tests/bench/ -run MaxLane -v -count=1
+```
+
 ### End-to-end with binary decode (`cmd/e2ebench`)
 
 The fairer test: data arrives **as frames** that are **decoded in the hot path**

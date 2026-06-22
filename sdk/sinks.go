@@ -7,6 +7,13 @@ import (
 	"github.com/gribovan2005/drift/pkg/sink"
 )
 
+// ParallelSink fans records round-robin to n inner sinks (mk() each), run
+// concurrently — the mirror of ParallelSource. Removes the single-sink serial point
+// so a parallel-source + vector.Parallel + ParallelSink lane scales with cores.
+func ParallelSink(n int, mk func() Sink) Sink {
+	return sink.Parallel(n, mk)
+}
+
 // Collector is an in-memory Sink that retains every record it receives. Read
 // them with Records after Run returns.
 type Collector struct {
