@@ -46,7 +46,9 @@ type Palette struct {
 }
 
 // Catalog returns the built-in block palette. ref:<name> blocks are intentionally
-// excluded — they are host-registered and not configurable from the UI.
+// excluded — they are host-registered and not configurable from the UI. vec-join is
+// also excluded: its build (dimension) table is an inline list of maps that the form
+// builder can't synthesize — it is a YAML/code-only op.
 func Catalog() Palette {
 	return Palette{
 		Sources: []BlockDef{
@@ -99,12 +101,18 @@ func Catalog() Palette {
 			//    the vec-* ops run on columnar chunk-records. See [[Vectorized Fast-Lane]].
 			{Kind: "operator", Type: "to-batch", Doc: "Row→columnar bridge: batch rows into chunks for the fast lane.", Params: []Param{
 				{Name: "size", Kind: KindInt, Default: 1024, Doc: "Rows per columnar chunk (≥1)."},
+				{Name: "id", Kind: KindString, Doc: "Optional Schema.ID tag for a vec-streamjoin side."},
 			}},
 			{Kind: "operator", Type: "to-rows", Doc: "Columnar→row bridge: expand chunks back to row Records for a row sink."},
 			{Kind: "operator", Type: "vec-filter", Doc: "Columnar filter on a numeric column.", Params: []Param{
 				{Name: "field", Kind: KindString, Required: true, Doc: "Int64/Float64 column to test."},
 				{Name: "cmp", Kind: KindEnum, Required: true, Default: "gte", Enum: []string{"gte", "lte", "eq"}, Doc: "Comparison."},
 				{Name: "value", Kind: KindNumber, Required: true, Doc: "Number to compare against (int→Int64, float→Float64)."},
+			}},
+			{Kind: "operator", Type: "vec-map", Doc: "Columnar arithmetic on a numeric column (in place).", Params: []Param{
+				{Name: "field", Kind: KindString, Required: true, Doc: "Int64/Float64 column to transform."},
+				{Name: "arith", Kind: KindEnum, Required: true, Default: "add", Enum: []string{"add", "sub", "mul", "div"}, Doc: "Arithmetic op (\"op\" is reserved)."},
+				{Name: "value", Kind: KindNumber, Required: true, Doc: "Operand (int→Int64, float→Float64)."},
 			}},
 			{Kind: "operator", Type: "vec-groupby", Flusher: true, Doc: "Columnar keyed GROUP BY (global; emits on flush).", Params: []Param{
 				{Name: "key", Kind: KindString, Required: true, Doc: "Int64/String key column."},
@@ -131,6 +139,14 @@ func Catalog() Palette {
 				{Name: "gap", Kind: KindInt, Required: true, Doc: "Inactivity gap (ts units)."},
 				{Name: "lateness", Kind: KindInt, Default: 0, Doc: "Allowed lateness (ts units)."},
 				{Name: "agg", Kind: KindString, Default: "count", Doc: "Comma list: count | sum:<f> | sumi:<f> | max:<f>."},
+			}},
+			{Kind: "operator", Type: "vec-streamjoin", Doc: "Columnar stream-stream event-time interval join (two sides by Schema.ID; wire both to-batch sides into this stage).", Params: []Param{
+				{Name: "left", Kind: KindString, Required: true, Doc: "Left side Schema.ID (matches a to-batch id)."},
+				{Name: "right", Kind: KindString, Required: true, Doc: "Right side Schema.ID."},
+				{Name: "key", Kind: KindString, Required: true, Doc: "Join key column (both sides)."},
+				{Name: "ts", Kind: KindString, Required: true, Doc: "Int64 timestamp column (both sides)."},
+				{Name: "window", Kind: KindInt, Required: true, Doc: "Interval: match when |tsL−tsR| ≤ window."},
+				{Name: "lateness", Kind: KindInt, Default: 0, Doc: "Allowed lateness (ts units)."},
 			}},
 		},
 		Sinks: []BlockDef{

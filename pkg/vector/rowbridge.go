@@ -17,15 +17,39 @@ import (
 //
 // `size` ≤ 0 defaults to 1024. Rows without a Payload (e.g. stray chunk-records) pass
 // through untouched.
-func FromRows(size int) core.Operator {
+func FromRows(size int) core.Operator { return FromRowsAs(size, "") }
+
+// FromRowsAs is FromRows that also stamps the emitted batches' Schema.ID. Use it to
+// tag a side of a stream-stream join (StreamJoin assigns each chunk to a side by
+// Schema.ID) when bridging from the row path declaratively.
+func FromRowsAs(size int, schemaID string) core.Operator {
 	if size <= 0 {
 		size = 1024
 	}
-	return &rowBatcher{size: size}
+	return &rowBatcher{size: size, schemaID: schemaID}
+}
+
+// BatchOf builds a single columnar batch from a slice of row payloads, using the same
+// schema inference as FromRows (sorted names, Go-typed, NULL for missing/mismatched).
+// Handy for small static datasets declared inline — e.g. a HashJoin build (dimension)
+// table from YAML. Returns an empty batch for no rows.
+func BatchOf(rows []map[string]any) *core.Batch {
+	if len(rows) == 0 {
+		return &core.Batch{}
+	}
+	b := &rowBatcher{size: len(rows) + 1} // +1 so it never auto-emits mid-build
+	for _, p := range rows {
+		if !b.inferred {
+			b.infer(p)
+		}
+		b.appendRow(p)
+	}
+	return b.emit().Chunk
 }
 
 type rowBatcher struct {
 	size     int
+	schemaID string
 	inferred bool
 	fields   []core.Field
 	cols     []core.Column // accumulation buffers (typed slices grow to n)
@@ -136,7 +160,7 @@ func (o *rowBatcher) appendRow(p map[string]any) {
 
 // emit builds a chunk from the accumulated columns and resets the buffers.
 func (o *rowBatcher) emit() core.Record {
-	b := &core.Batch{Schema: core.Schema{Fields: o.fields}, Len: o.n, Cols: o.cols}
+	b := &core.Batch{Schema: core.Schema{ID: o.schemaID, Fields: o.fields}, Len: o.n, Cols: o.cols}
 	o.resetCols()
 	return core.Record{Chunk: b}
 }

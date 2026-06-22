@@ -33,7 +33,34 @@ func buildFromRows(p params) (core.Operator, error) {
 		}
 		size = n
 	}
-	return vector.FromRows(size), nil
+	// Optional id tags the emitted batches' Schema.ID, used to mark a side feeding a
+	// vec-streamjoin.
+	return vector.FromRowsAs(size, p.strOr("id", "")), nil
+}
+
+func buildVecStreamJoin(p params) (core.Operator, error) {
+	left, err := p.str("left")
+	if err != nil {
+		return nil, err
+	}
+	right, err := p.str("right")
+	if err != nil {
+		return nil, err
+	}
+	key, err := p.str("key")
+	if err != nil {
+		return nil, err
+	}
+	ts, err := p.str("ts")
+	if err != nil {
+		return nil, err
+	}
+	window, err := int64Param(p, "window")
+	if err != nil {
+		return nil, err
+	}
+	lateness, _ := optInt64(p, "lateness")
+	return vector.StreamJoin(left, right, key, ts, window).Lateness(lateness).Op(), nil
 }
 
 func buildVecFilter(p params) (core.Operator, error) {
@@ -81,6 +108,152 @@ func floatPred(cmp string, t float64) func(float64) bool {
 	default: // gte
 		return func(x float64) bool { return x >= t }
 	}
+}
+
+func buildVecMap(p params) (core.Operator, error) {
+	field, err := p.str("field")
+	if err != nil {
+		return nil, err
+	}
+	op := p.strOr("arith", "add") // "arith" not "op": "op" is the reserved stage field
+	v, ok := p["value"]
+	if !ok {
+		return nil, fmt.Errorf("vec-map: missing required param %q", "value")
+	}
+	if (op == "div") && isZero(v) {
+		return nil, fmt.Errorf("vec-map: division by zero")
+	}
+	switch n := v.(type) {
+	case int:
+		f, err := intArith(op, int64(n))
+		if err != nil {
+			return nil, err
+		}
+		return vector.MapInt64(field, f), nil
+	case int64:
+		f, err := intArith(op, n)
+		if err != nil {
+			return nil, err
+		}
+		return vector.MapInt64(field, f), nil
+	case float64:
+		f, err := floatArith(op, n)
+		if err != nil {
+			return nil, err
+		}
+		return vector.MapFloat64(field, f), nil
+	default:
+		return nil, fmt.Errorf("vec-map: value must be a number, got %T", v)
+	}
+}
+
+func isZero(v any) bool {
+	switch n := v.(type) {
+	case int:
+		return n == 0
+	case int64:
+		return n == 0
+	case float64:
+		return n == 0
+	default:
+		return false
+	}
+}
+
+func intArith(op string, v int64) (func(int64) int64, error) {
+	switch op {
+	case "add":
+		return func(x int64) int64 { return x + v }, nil
+	case "sub":
+		return func(x int64) int64 { return x - v }, nil
+	case "mul":
+		return func(x int64) int64 { return x * v }, nil
+	case "div":
+		return func(x int64) int64 { return x / v }, nil
+	default:
+		return nil, fmt.Errorf("vec-map: op must be add|sub|mul|div, got %q", op)
+	}
+}
+
+func floatArith(op string, v float64) (func(float64) float64, error) {
+	switch op {
+	case "add":
+		return func(x float64) float64 { return x + v }, nil
+	case "sub":
+		return func(x float64) float64 { return x - v }, nil
+	case "mul":
+		return func(x float64) float64 { return x * v }, nil
+	case "div":
+		return func(x float64) float64 { return x / v }, nil
+	default:
+		return nil, fmt.Errorf("vec-map: op must be add|sub|mul|div, got %q", op)
+	}
+}
+
+// buildVecJoin builds a build-side HashJoin whose dimension (build) table is declared
+// inline in YAML as a list of maps — fully self-contained, no Go, no file I/O.
+func buildVecJoin(p params) (core.Operator, error) {
+	buildKey, err := p.str("build_key")
+	if err != nil {
+		return nil, err
+	}
+	probeKey, err := p.str("probe_key")
+	if err != nil {
+		return nil, err
+	}
+	rows, err := buildRows(p)
+	if err != nil {
+		return nil, err
+	}
+	j := vector.HashJoin([]*core.Batch{vector.BatchOf(rows)}, buildKey, probeKey)
+	for _, b := range strings.Split(p.strOr("bring", ""), ",") {
+		f := strings.TrimSpace(b)
+		if f == "" {
+			continue
+		}
+		// "field" or "field:out"
+		field, out, ok := strings.Cut(f, ":")
+		if !ok {
+			out = field
+		}
+		j = j.Bring(field, out)
+	}
+	if boolParam(p, "left_outer") {
+		j = j.LeftOuter()
+	}
+	if boolParam(p, "multi") {
+		j = j.MultiMatch()
+	}
+	return j.Op(), nil
+}
+
+// buildRows reads the inline "build" param (a list of maps) into row payloads.
+func buildRows(p params) ([]map[string]any, error) {
+	raw, ok := p["build"]
+	if !ok {
+		return nil, fmt.Errorf("vec-join: missing required param %q (inline list of dimension rows)", "build")
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("vec-join: build must be a list of maps, got %T", raw)
+	}
+	rows := make([]map[string]any, 0, len(list))
+	for i, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("vec-join: build[%d] must be a map, got %T", i, item)
+		}
+		rows = append(rows, m)
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("vec-join: build is empty")
+	}
+	return rows, nil
+}
+
+func boolParam(p params, key string) bool {
+	b, _ := p[key].(bool)
+	return b
 }
 
 func buildVecGroupBy(p params) (core.Operator, error) {

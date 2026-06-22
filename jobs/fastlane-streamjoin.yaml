@@ -1,0 +1,45 @@
+name: fastlane-streamjoin
+# Columnar stream-stream interval join, declaratively. One row source is split by
+# `side` into two Schema.ID-tagged columnar streams (to-batch id), which fan into a
+# single vec-streamjoin (DAG fan-in), then back to rows.
+source:
+    type: generator
+    fields:
+        side: choice:L|R
+        id: rand:int:1:5
+        ts: seq
+        v: rand:int:1:100
+    rate: 1ms
+stages:
+    - label: splitL
+      op: filter
+      field: side
+      cmp: eq
+      value: L
+      next: [batchL]
+    - label: batchL
+      op: to-batch
+      id: L
+      next: [join]
+    - label: splitR
+      op: filter
+      field: side
+      cmp: eq
+      value: R
+      next: [batchR]
+    - label: batchR
+      op: to-batch
+      id: R
+      next: [join]
+    - label: join
+      op: vec-streamjoin
+      left: L
+      right: R
+      key: id
+      ts: ts
+      window: 50
+      next: [rows]
+    - label: rows
+      op: to-rows
+sink:
+    type: memory

@@ -238,6 +238,8 @@ func GenInt64(field string, nBatches, rows int, fill func(i int) int64) []*core.
 func Collect() *Collector                            // keeps chunks; .Rows() / .Batches()
 func Discard() core.Sink                              // drains chunk-records
 func FromRows(size int) core.Operator                // row → columnar bridge (batch rows into chunks)
+func FromRowsAs(size int, schemaID string) core.Operator // FromRows + stamp Batch.Schema.ID (tag a join side)
+func BatchOf(rows []map[string]any) *core.Batch      // one batch from static rows (e.g. a join build table)
 func ToRows() core.Operator                          // expand a chunk → row Records (handoff to row path/sinks)
 
 // Binary columnar codec + wire source (decode counts toward throughput):
@@ -273,9 +275,12 @@ is what makes the fast lane reachable declaratively.
 The fast-lane operators are registered in the job catalog (`pkg/job`), so a pipeline
 uses them with **no Go**: bridge in with `to-batch` (FromRows), run `vec-*` ops, bridge
 out with `to-rows` before a row sink. Ops: `to-batch`, `to-rows`, `vec-filter`,
-`vec-groupby`, `vec-tumbling`, `vec-sliding`, `vec-session` (aggregates as a comma list
+`vec-map`, `vec-groupby`, `vec-tumbling`, `vec-sliding`, `vec-session`, `vec-join`
+(inline dimension table), `vec-streamjoin` (aggregates as a comma list
 `count | sum:<f> | sumi:<f> | max:<f>`). They are single-stage (reject `parallelism`).
-See `jobs/fastlane-groupby.yaml` and [[CLI & Jobs]].
+A **stream-stream** join in YAML tags each side with a `to-batch` `id` (→ `FromRowsAs`
+stamps `Batch.Schema.ID`) and fans both into one `vec-streamjoin` via the DAG. See
+`jobs/fastlane-groupby.yaml`, `jobs/fastlane-streamjoin.yaml` and [[CLI & Jobs]].
 
 ---
 

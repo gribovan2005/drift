@@ -116,14 +116,15 @@ independent partition-pipelines instead. See [[Benchmarks]].)
 The engine is broad; the next phase closes the gap between **feature breadth** and
 **product depth**. Three levers, in dependency order:
 
-1. **Golden path — columnar operators are declarative (✅ first cut done).** The
-   row↔columnar bridges `vector.FromRows`/`ToRows` plus the `to-batch`/`to-rows`/
-   `vec-filter`/`vec-groupby`/`vec-tumbling`/`vec-sliding`/`vec-session` ops are wired
-   into the YAML job registry + catalog (so they appear in the CLI and web builder
-   palette). A pipeline drops into the fast lane and back with **no Go** —
-   `jobs/fastlane-groupby.yaml` runs `source → to-batch → vec-groupby → to-rows → sink`.
-   **Remaining:** `vec-join`/`vec-streamjoin` in YAML (need build-side/side-tag config),
-   a `vec-map` expression form, and verifying the web builder renders the new blocks.
+1. **Golden path — columnar operators are declarative (✅ done).** The row↔columnar
+   bridges (`vector.FromRows`/`FromRowsAs`/`ToRows`/`BatchOf`) plus `to-batch`/`to-rows`/
+   `vec-filter`/`vec-map`/`vec-groupby`/`vec-tumbling`/`vec-sliding`/`vec-session`/
+   `vec-join`/`vec-streamjoin` are wired into the YAML job registry + catalog (the
+   form-friendly ones appear in the CLI and web-builder palette; `vec-join`'s inline
+   dimension table is YAML-only, like `ref:`). A pipeline drops into the fast lane and
+   back with **no Go**: `jobs/fastlane-groupby.yaml` and `jobs/fastlane-streamjoin.yaml`
+   (the latter tags two sides via `to-batch id` and fans them into one `vec-streamjoin`
+   through the DAG). Verified end-to-end + web-palette + parity under `-race`.
 2. **Hero feature — live schema evolution, sharpened.** It is the objectively rarest
    differentiator (competitors require a job restart). Lever 2 makes it the headline:
    tighten the contract/coverage across the columnar path, and add a focused

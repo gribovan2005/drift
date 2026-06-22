@@ -25,8 +25,8 @@ func TestCatalog_CoversAllOps(t *testing.T) {
 	assert.Equal(t, map[string]bool{
 		"filter": true, "map-set": true, "map-rename": true, "dedup": true,
 		"tumbling": true, "timestamp": true, "eventwindow": true, "session": true,
-		"to-batch": true, "to-rows": true, "vec-filter": true, "vec-groupby": true,
-		"vec-tumbling": true, "vec-sliding": true, "vec-session": true,
+		"to-batch": true, "to-rows": true, "vec-filter": true, "vec-map": true, "vec-groupby": true,
+		"vec-tumbling": true, "vec-sliding": true, "vec-session": true, "vec-streamjoin": true,
 	}, got(cat.Operators))
 	assert.Equal(t, map[string]bool{"memory": true, "http": true}, got(cat.Sinks))
 }
