@@ -89,6 +89,25 @@ helps ingestion-bound pipelines.
 
 ---
 
+## Parallel sink (the egress counterpart)
+
+`sink.Parallel(n, mk func() core.Sink) core.Sink` (re-exported as `sdk.ParallelSink`)
+mirrors `NewParallel` on the egress side: it fans the final stream **round-robin** to
+n inner sinks, each on its own goroutine, removing the single-sink serial point
+(`pkg/pipeline/pipeline.go` runs the sink on one goroutine). With a parallel source +
+`vector.Parallel` stage + parallel sink, a fully-columnar lane scales across cores.
+
+- Round-robin distribution suits **stateless** sinks; a stateful/keyed sink must be
+  sharded by key upstream instead.
+- An inner-sink error (or parent ctx cancel) cancels a child context so the
+  dispatcher unblocks; the first inner error is returned.
+- Both engine edges still pass through one channel each — for large columnar chunks
+  that's cheap (few items), so the parallel sink lifts the cap; for tiny row records
+  the per-record channel cost dominates. See [[Benchmarks]] (MaxLane).
+- Tests: fan-out completeness, n=1 passthrough, ctx cancel, inner-error propagation.
+
+---
+
 ## See also
 
 - [[Sources & Sinks]] — the underlying source implementations

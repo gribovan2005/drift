@@ -83,7 +83,7 @@ stream engine". All shipped:
 | **Homebrew distribution** | ✅ done | `brew install gribovan2005/drift/drift`; GoReleaser + tap, single self-contained binary. See [[Distribution]] |
 | **Prometheus metrics export** | ✅ done | dependency-free text exposition over `pipeline.Snapshot()`; `sdk.PrometheusHandler`, auth-exempt `GET /metrics`. See [[Metrics Export]] |
 | **Resource profiles** | ✅ done | `Sidecar`/`Dedicated` presets (batch/buffer/linger + opt-in process-global knobs); SDK (`WithProfile`) **and** YAML/runner (`profile:` field). See [[Resource Profiles]] |
-| **Parallel / sharded source** | ✅ done | `source.NewParallel` + Kafka partition-pinned readers (`KafkaPartitions`) lift the single-reader ingestion ceiling. See [[Parallel Source]] |
+| **Parallel triad (source/stage/sink)** | ✅ done | `source.NewParallel` (+ Kafka partition readers) for decode, `vector.Parallel` for compute, `sink.Parallel` for egress — every serial point parallel; full columnar lane scales ~5.4× @8 (MaxLane). See [[Parallel Source]], [[Benchmarks]] |
 | **Vectorized fast-lane** | ✅ done | columnar `core.Batch` carried as chunk-records; Int64/Float64/String/Bool `Map`/`Filter` + global `Sum`/`Count`/`Max` + **keyed `GroupBy`** + **event-time `TumblingGroup`** (watermark, periodic emit) + **build-side `HashJoin`** (dimension enrichment); binary codec (all four kinds) + `KafkaColumnarSource`; `vector.Parallel` per-stage scaling; row-accurate metrics. **~247× on the stateless hot path, ~24× on group-by, ~52M rows/s over real Kafka.** See [[Vectorized Fast-Lane]], [[Benchmarks]] |
 
 ### Next (not yet built — explicit scope, not bugs)
@@ -92,9 +92,11 @@ stream engine". All shipped:
   Map/Filter, global + keyed `GroupBy`, event-time `TumblingGroup`, and build-side
   `HashJoin` (dimension enrichment) are done; **stream-stream (mixed) joins**,
   left-outer/M:N joins, and sliding/session windows stay on the row engine.
-- **Raise the single-node ceiling further** — parallelise the vectorized *sink* and
-  source-side decode; the current end-to-end cap is the single source goroutine and
-  single terminal stage, not compute.
+- **Fully independent N-lane pipelines** — the parallel triad is done (parallel
+  source decode + `vector.Parallel` compute + `sink.Parallel`), and the end-to-end
+  columnar lane now scales ~5.4× at 8 shards (see [[Benchmarks]] MaxLane). To go
+  further, run N independent source→sink lanes (no shared channel) — a larger change
+  than the additive wrappers.
 - **Copy-on-fan-out for chunks** — vectorized ops mutate batches in place (safe for
   linear pipelines only); a branching DAG sharing a chunk needs a copy.
 - **Non-linear DAG in the SDK builder** — the row engine supports DAGs via
