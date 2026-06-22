@@ -213,6 +213,32 @@ where you want it. The result proves Drift's decode+compute is not the limit.
 go run ./cmd/e2ebench
 ```
 
+### Real Kafka — over the wire (`cmd/kafkademo`)
+
+Not in-process this time: produce ~5M rows as binary-columnar frames to a real
+Kafka topic (`confluentinc/cp-kafka`, **10 partitions**), then consume all
+partitions **in parallel** (`source.NewParallel` of `vector.KafkaColumnarSource`),
+decode each frame, and run a vectorized map. Time-to-last-row (idle-stop excludes a
+small straggler tail):
+
+| | rows | time | throughput |
+|---|---:|---:|---:|
+| real Kafka, 10 partitions, binary + vectorized | 4.98 M | 96 ms | **~52 M rows/s** |
+
+→ ~52 M rows/s **over actual Kafka** (loopback + broker + decode + compute), vs
+~1.2 M/s for the JSON+row path — the binary codec keeps decode off the critical
+path so the cap is Kafka fetch/loopback bandwidth (~400 MB/s here), not Drift.
+
+Honest caveat: the broker runs on the **same laptop** (in production it's on
+separate nodes), and loopback ≠ a real NIC — so this is conservative-but-real for
+the engine and optimistic for the transport. The point stands: decode+compute is
+not the bottleneck.
+
+```bash
+# bring up a broker, then:
+go run ./cmd/kafkademo      # KAFKA_ADDR defaults to localhost:9092
+```
+
 ---
 
 ## Resource profiles — does "beast mode" do anything?

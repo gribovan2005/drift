@@ -70,5 +70,6 @@ Streaming data processing engine for Go. Single binary, zero external dependenci
 | `cmd/demo` | Demo pipeline + web UI | all |
 | `cmd/sdkdemo` | SDK demo: real-time analytics embedded in a Go HTTP service (live view + schema evolution + `/metrics`) | sdk, operator, schema |
 | `cmd/e2ebench` | End-to-end throughput demo: JSON+row vs binary+vectorized vs parallel binary+vec | sdk, source, vector |
+| `cmd/kafkademo` | Real Kafka end-to-end: produce binary-columnar frames → consume 10 partitions in parallel → vectorized (`vector.KafkaColumnarSource`) | sdk, source, vector, kafka-go |
 
 **Import rule**: `pkg/core` must never import other `pkg/` packages.
