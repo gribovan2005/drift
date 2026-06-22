@@ -106,6 +106,41 @@ func (b *Batch) CopyRow(dst, src int) {
 	}
 }
 
+// Clone returns a deep copy of the batch: a fresh Schema.Fields slice and freshly
+// allocated copies of every column's typed slices (and null mask). Vectorized
+// operators mutate batches in place (Filter compacts, Map rewrites a column, join
+// appends columns/fields), which is safe only while a chunk has a single owner — so
+// the DAG executor clones a chunk before fanning it out to multiple branches. Returns
+// nil for a nil receiver.
+func (b *Batch) Clone() *Batch {
+	if b == nil {
+		return nil
+	}
+	nb := &Batch{Schema: b.Schema, Len: b.Len}
+	nb.Schema.Fields = append([]Field(nil), b.Schema.Fields...)
+	nb.Cols = make([]Column, len(b.Cols))
+	for i, c := range b.Cols {
+		nc := Column{Kind: c.Kind}
+		if c.I64 != nil {
+			nc.I64 = append([]int64(nil), c.I64...)
+		}
+		if c.F64 != nil {
+			nc.F64 = append([]float64(nil), c.F64...)
+		}
+		if c.Str != nil {
+			nc.Str = append([]string(nil), c.Str...)
+		}
+		if c.B != nil {
+			nc.B = append([]bool(nil), c.B...)
+		}
+		if c.Null != nil {
+			nc.Null = append([]bool(nil), c.Null...)
+		}
+		nb.Cols[i] = nc
+	}
+	return nb
+}
+
 // Truncate shrinks every column slice to n and sets Len = n.
 func (b *Batch) Truncate(n int) {
 	for ci := range b.Cols {

@@ -37,7 +37,9 @@ Three levels, all within one process:
 
 - **Pipeline (inter-stage)** — every stage is its own goroutine; all stages run
   concurrently across cores (an assembly line). Fan-out branches also run in
-  parallel. This is always on.
+  parallel; a columnar chunk-record is deep-copied per branch on fan-out
+  (`core.Batch.Clone`) so in-place vectorized ops can't corrupt siblings (linear edges
+  copy nothing). This is always on.
 - **Intra-stage (data) parallelism** — a stage can opt into `parallelism: N` to
   shard its own load across N goroutines via `pipeline.Parallel`: stateless ops
   shard round-robin; keyed ops (dedup, session) shard by key (correctness kept);
@@ -102,8 +104,6 @@ stream engine". All shipped:
   engine.
 - (Done: inner + left-outer + M:N joins with NULL-mask columns; tumbling + sliding +
   session columnar windows. Remaining columnar gap is stream-stream mixed joins.)
-- **Copy-on-fan-out for chunks** — vectorized ops mutate batches in place (safe for
-  linear pipelines only); a branching DAG sharing a chunk needs a copy.
 - **Non-linear DAG in the SDK builder** — the row engine supports DAGs via
   `Stage.Next`/YAML; the fluent SDK builds linear chains only.
 
