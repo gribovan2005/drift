@@ -95,7 +95,23 @@ func GenInt64(field string, nBatches, rows int, fill func(i int) int64) []*core.
 func Collect() *Collector                            // keeps chunks; .Rows() / .Batches()
 func Discard() core.Sink                              // drains chunk-records
 func ToRows() core.Operator                          // expand a chunk → row Records (handoff to row path/sinks)
+
+// Binary columnar codec + wire source (decode counts toward throughput):
+func EncodeBatch(b *core.Batch) ([]byte, error)      // binary columnar frame (Int64/Float64)
+func DecodeBatch(data []byte) (*core.Batch, error)   // hand-rolled fast decode
+func BinSource(frames [][]byte) core.Source          // decode frames → chunk-records (model a binary topic)
 ```
+
+### Binary codec (vs JSON)
+
+`EncodeBatch`/`DecodeBatch` are a compact column-oriented binary format: a small
+header (field names + kinds + row count) then raw little-endian column bytes.
+Decode is a few tight loops over raw bytes — no parsing, no per-value alloc, no
+boxing — so unlike JSON the decode cost is negligible next to compute. `BinSource`
+decodes in the read path, modelling a Kafka topic of binary-columnar messages; wrap
+N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-end
+(decode in the hot path, 5M records): JSON+row `~1.2 M/s` vs binary+vectorized
+`~360 M/s`, parallel binary+vec `~430 M/s` — see [[Benchmarks]] and `cmd/e2ebench`.
 
 ---
 
