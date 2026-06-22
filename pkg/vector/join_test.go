@@ -225,6 +225,103 @@ func TestEncodeBatch_NullRefused(t *testing.T) {
 	}
 }
 
+func TestHashJoin_MultiMatch(t *testing.T) {
+	// Build relation: key 1 has TWO rows (US/DE), key 2 has one (JP), key 3 one (FR).
+	dim := dimInt([]int64{1, 1, 2, 3}, []string{"US", "DE", "JP", "FR"}, []int64{10, 11, 20, 30})
+	// probe: user 1 (→ 2 rows), 2 (→ 1 row), 99 (→ 0, dropped inner).
+	probe := probeInt([]int64{1, 2, 99}, []int64{100, 200, 300})
+	c := runVec(t, []*core.Batch{probe},
+		vector.HashJoin([]*core.Batch{dim}, "id", "user_id").
+			Bring("country", "country").Bring("tier", "tier").MultiMatch().Op())
+
+	res := c.Batches()[0]
+	if res.Len != 3 { // 1→{US,DE}, 2→{JP}; 99 dropped
+		t.Fatalf("M:N rows = %d, want 3", res.Len)
+	}
+	uid := res.Int64("user_id")
+	amt := res.Int64("amt")
+	country := res.String("country")
+	tier := res.Int64("tier")
+	// fan-out preserves probe order; build order within a key follows build insertion.
+	type r struct {
+		uid, amt, tier int64
+		country        string
+	}
+	got := []r{}
+	for i := 0; i < res.Len; i++ {
+		got = append(got, r{uid[i], amt[i], tier[i], country[i]})
+	}
+	want := []r{
+		{1, 100, 10, "US"},
+		{1, 100, 11, "DE"},
+		{2, 200, 20, "JP"},
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("row %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestHashJoin_MultiMatch_LeftOuter(t *testing.T) {
+	dim := dimInt([]int64{1, 1, 2}, []string{"US", "DE", "JP"}, []int64{10, 11, 20})
+	// probe: 1 (→2 rows), 99 (→1 NULL row), 2 (→1 row).
+	probe := probeInt([]int64{1, 99, 2}, []int64{5, 6, 7})
+	c := runVec(t, []*core.Batch{probe},
+		vector.HashJoin([]*core.Batch{dim}, "id", "user_id").
+			Bring("country", "country").MultiMatch().LeftOuter().Op())
+	res := c.Batches()[0]
+	if res.Len != 4 { // 1→2, 99→1(NULL), 2→1
+		t.Fatalf("rows = %d, want 4", res.Len)
+	}
+	uid := res.Int64("user_id")
+	country := res.String("country")
+	cNull := res.IsNull("country")
+	if cNull == nil {
+		t.Fatal("expected null mask (99 unmatched)")
+	}
+	// row 2 is the unmatched user 99 → NULL country.
+	if uid[2] != 99 || !cNull[2] {
+		t.Fatalf("row2 should be uid 99 NULL, got uid%d null%v", uid[2], cNull[2])
+	}
+	// the matched rows must not be null.
+	for _, i := range []int{0, 1, 3} {
+		if cNull[i] {
+			t.Fatalf("row %d (uid %d, %q) unexpectedly NULL", i, uid[i], country[i])
+		}
+	}
+}
+
+func TestHashJoin_MultiMatch_StringKey(t *testing.T) {
+	dim := &core.Batch{
+		Schema: core.Schema{Fields: []core.Field{
+			{Name: "code", Type: core.FieldTypeString},
+			{Name: "rate", Type: core.FieldTypeFloat},
+		}},
+		Len: 3,
+		Cols: []core.Column{
+			{Kind: core.KindString, Str: []string{"USD", "USD", "EUR"}}, // USD twice
+			{Kind: core.KindFloat64, F64: []float64{1.0, 1.5, 1.1}},
+		},
+	}
+	probe := &core.Batch{
+		Schema: core.Schema{Fields: []core.Field{{Name: "cur", Type: core.FieldTypeString}}},
+		Len:    2,
+		Cols:   []core.Column{{Kind: core.KindString, Str: []string{"USD", "EUR"}}},
+	}
+	c := runVec(t, []*core.Batch{probe},
+		vector.HashJoin([]*core.Batch{dim}, "code", "cur").Bring("rate", "rate").MultiMatch().Op())
+	res := c.Batches()[0]
+	if res.Len != 3 { // USD→2, EUR→1
+		t.Fatalf("rows = %d, want 3", res.Len)
+	}
+	cur := res.String("cur")
+	rate := res.Float64("rate")
+	if cur[0] != "USD" || rate[0] != 1.0 || cur[1] != "USD" || rate[1] != 1.5 || cur[2] != "EUR" || rate[2] != 1.1 {
+		t.Fatalf("unexpected fan-out: %v / %v", cur, rate)
+	}
+}
+
 func TestHashJoin_Errors(t *testing.T) {
 	dim := dimInt([]int64{1}, []string{"US"}, []int64{1})
 	run := func(j core.Operator, probe *core.Batch) error {

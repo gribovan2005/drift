@@ -10,9 +10,10 @@ import (
 // from `build` batches keyed by `buildKey`, then each probe chunk is matched by
 // `probeKey` and **enriched** with the requested build columns (Bring). Inner join by
 // default — matched probe rows are kept (compacted), unmatched dropped; call
-// LeftOuter to keep unmatched probe rows with NULL brought cells instead. The build
-// side is treated as a **lookup table: one row per key** (later builds override) — the
-// dimension-enrichment case (no M:N fan-out).
+// LeftOuter to keep unmatched probe rows with NULL brought cells instead. By default
+// the build side is a **lookup table: one row per key** (later builds override) — the
+// dimension-enrichment case; call MultiMatch for a full M:N relation (build keeps all
+// rows per key, each probe row fans out to one output row per match).
 //
 // The build table is read-only after construction, so a HashJoin IS safe under
 // vector.Parallel (each shard builds its own copy). Keys are Int64 or String.
@@ -34,6 +35,7 @@ type HJoin struct {
 	buildKey, probeKey string
 	brings             []bring
 	leftOuter          bool
+	multi              bool
 }
 
 // Bring appends build column `field` (renamed to `out`) to matched probe rows.
@@ -47,6 +49,18 @@ func (j *HJoin) Bring(field, out string) *HJoin {
 // brought column. Default is inner (unmatched probe rows dropped).
 func (j *HJoin) LeftOuter() *HJoin {
 	j.leftOuter = true
+	return j
+}
+
+// MultiMatch makes the build side a full relation (M:N) instead of a one-row-per-key
+// lookup table: the build keeps *every* row per key, and each probe row fans out to
+// one output row per matching build row (so K build rows for a key → K output rows).
+// Combine with LeftOuter for a left M:N join (a probe row with no match still emits a
+// single row with NULL brought cells). Default (off) is the efficient
+// dimension-enrichment path (last build row wins, output row count = matched probe
+// rows, compacted in place).
+func (j *HJoin) MultiMatch() *HJoin {
+	j.multi = true
 	return j
 }
 
@@ -69,8 +83,10 @@ type joinOp struct {
 
 	built  bool
 	strKey bool
-	li     map[int64]int
-	ls     map[string]int
+	li     map[int64]int   // single-match: key → build idx (last wins)
+	ls     map[string]int  //
+	mli    map[int64][]int // multi-match: key → all build idxs
+	mls    map[string][]int
 	nBuilt int
 	cols   []buildCol // parallel to brings
 }
@@ -92,9 +108,14 @@ func (o *joinOp) buildTable() error {
 		strKey := sk != nil
 		if !o.built {
 			o.strKey = strKey
-			if strKey {
+			switch {
+			case o.multi && strKey:
+				o.mls = make(map[string][]int)
+			case o.multi:
+				o.mli = make(map[int64][]int)
+			case strKey:
 				o.ls = make(map[string]int)
-			} else {
+			default:
 				o.li = make(map[int64]int)
 			}
 			o.built = true
@@ -137,9 +158,14 @@ func (o *joinOp) buildTable() error {
 					o.cols[bi].b = append(o.cols[bi].b, fbool[bi][row])
 				}
 			}
-			if strKey {
+			switch {
+			case o.multi && strKey:
+				o.mls[sk[row]] = append(o.mls[sk[row]], idx)
+			case o.multi:
+				o.mli[ik[row]] = append(o.mli[ik[row]], idx)
+			case strKey:
 				o.ls[sk[row]] = idx
-			} else {
+			default:
 				o.li[ik[row]] = idx
 			}
 			o.nBuilt++
@@ -174,9 +200,14 @@ func (o *joinOp) Process(in []core.Record) ([]core.Record, error) {
 			}
 		}
 
-		// Match each probe row to a build index. Inner: drop unmatched (compact in
-		// place). Left-outer: keep every row, recording a -1 sentinel for unmatched so
-		// gatherBuild emits NULL brought cells.
+		if o.multi {
+			out = append(out, o.processMulti(b, ikeys, skeys))
+			continue
+		}
+
+		// Single-match (dimension) path. Match each probe row to one build index.
+		// Inner: drop unmatched (compact in place). Left-outer: keep every row,
+		// recording a -1 sentinel for unmatched so gatherBuild emits NULL brought cells.
 		w := 0
 		buildIdx := make([]int, 0, b.Len)
 		for i := 0; i < b.Len; i++ {
@@ -209,6 +240,88 @@ func (o *joinOp) Process(in []core.Record) ([]core.Record, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// processMulti runs the M:N fan-out path: each probe row emits one output row per
+// matching build row (left-outer also emits a single NULL-brought row for no match).
+// Output is a fresh batch — probe columns are gathered (repeated per match), brought
+// columns gathered by build index — so the input chunk is not mutated.
+func (o *joinOp) processMulti(b *core.Batch, ikeys []int64, skeys []string) core.Record {
+	// Build the row plan: parallel (probeRow, buildIdx) lists, one entry per output row.
+	probeRows := make([]int, 0, b.Len)
+	buildIdx := make([]int, 0, b.Len)
+	for i := 0; i < b.Len; i++ {
+		var matches []int
+		if o.strKey {
+			matches = o.mls[skeys[i]]
+		} else {
+			matches = o.mli[ikeys[i]]
+		}
+		if len(matches) == 0 {
+			if o.leftOuter {
+				probeRows = append(probeRows, i)
+				buildIdx = append(buildIdx, -1) // NULL brought cells
+			}
+			continue
+		}
+		for _, bi := range matches {
+			probeRows = append(probeRows, i)
+			buildIdx = append(buildIdx, bi)
+		}
+	}
+
+	cols := make([]core.Column, 0, len(b.Cols)+len(o.brings))
+	fields := make([]core.Field, 0, len(b.Schema.Fields)+len(o.brings))
+	for ci := range b.Cols {
+		cols = append(cols, gatherProbe(b.Cols[ci], probeRows))
+		fields = append(fields, b.Schema.Fields[ci])
+	}
+	for bi, br := range o.brings {
+		cols = append(cols, gatherBuild(o.cols[bi], buildIdx))
+		fields = append(fields, core.Field{Name: br.out, Type: kindToFieldType(o.cols[bi].kind)})
+	}
+	return core.Record{Chunk: &core.Batch{Schema: core.Schema{Fields: fields}, Len: len(probeRows), Cols: cols}}
+}
+
+// gatherProbe builds a new column by selecting rows from c in the given order
+// (repeats allowed, for fan-out). The null mask is carried when present.
+func gatherProbe(c core.Column, rows []int) core.Column {
+	n := len(rows)
+	out := core.Column{Kind: c.Kind}
+	switch c.Kind {
+	case core.KindInt64:
+		v := make([]int64, n)
+		for i, r := range rows {
+			v[i] = c.I64[r]
+		}
+		out.I64 = v
+	case core.KindFloat64:
+		v := make([]float64, n)
+		for i, r := range rows {
+			v[i] = c.F64[r]
+		}
+		out.F64 = v
+	case core.KindString:
+		v := make([]string, n)
+		for i, r := range rows {
+			v[i] = c.Str[r]
+		}
+		out.Str = v
+	case core.KindBool:
+		v := make([]bool, n)
+		for i, r := range rows {
+			v[i] = c.B[r]
+		}
+		out.B = v
+	}
+	if c.Null != nil {
+		nl := make([]bool, n)
+		for i, r := range rows {
+			nl[i] = c.Null[r]
+		}
+		out.Null = nl
+	}
+	return out
 }
 
 // gatherBuild materialises one brought column for the kept probe rows. A build index
