@@ -100,6 +100,7 @@ func ToRows() core.Operator                          // expand a chunk → row R
 func EncodeBatch(b *core.Batch) ([]byte, error)      // binary columnar frame (Int64/Float64)
 func DecodeBatch(data []byte) (*core.Batch, error)   // hand-rolled fast decode
 func BinSource(frames [][]byte) core.Source          // decode frames → chunk-records (model a binary topic)
+func KafkaColumnarSource(brokers []string, topic string, partition int) core.Source // decode a Kafka partition's binary frames
 ```
 
 ### Binary codec (vs JSON)
