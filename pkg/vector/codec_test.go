@@ -39,14 +39,36 @@ func TestCodec_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestCodec_RejectsUnsupportedKind(t *testing.T) {
-	b := &core.Batch{
-		Schema: core.Schema{Fields: []core.Field{{Name: "s", Type: core.FieldTypeString}}},
-		Len:    1,
-		Cols:   []core.Column{{Kind: core.KindString, Str: []string{"x"}}},
+func TestCodec_RoundTrip_StringBool(t *testing.T) {
+	in := &core.Batch{
+		Schema: core.Schema{Fields: []core.Field{
+			{Name: "cat", Type: core.FieldTypeString},
+			{Name: "ok", Type: core.FieldTypeBool},
+			{Name: "v", Type: core.FieldTypeInt},
+		}},
+		Len: 3,
+		Cols: []core.Column{
+			{Kind: core.KindString, Str: []string{"alpha", "", "héllo"}}, // incl. empty + multibyte
+			{Kind: core.KindBool, B: []bool{true, false, true}},
+			{Kind: core.KindInt64, I64: []int64{7, 8, 9}},
+		},
 	}
-	if _, err := vector.EncodeBatch(b); err == nil {
-		t.Fatal("expected error encoding a string column")
+	enc, err := vector.EncodeBatch(in)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	out, err := vector.DecodeBatch(enc)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if s := out.String("cat"); s[0] != "alpha" || s[1] != "" || s[2] != "héllo" {
+		t.Fatalf("string col = %v", s)
+	}
+	if b := out.Bool("ok"); b[0] != true || b[1] != false || b[2] != true {
+		t.Fatalf("bool col = %v", b)
+	}
+	if v := out.Int64("v"); v[2] != 9 {
+		t.Fatalf("int col = %v", v)
 	}
 }
 

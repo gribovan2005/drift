@@ -1,6 +1,7 @@
 package vector
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -8,62 +9,69 @@ import (
 	"github.com/gribovan2005/drift/pkg/core"
 )
 
-// Binary columnar wire format for a Batch (Int64/Float64 columns):
+// Binary columnar wire format for a Batch (Int64/Float64/String/Bool columns):
 //
 //	uint32  numCols
 //	per col: uint8 kind, uint16 nameLen, name bytes
 //	uint32  len (rows)
-//	per col: len * 8 bytes, little-endian (int64 bits / float64 bits)
+//	per col, len values:
+//	  Int64/Float64 → 8 bytes little-endian each
+//	  Bool          → 1 byte each (0/1)
+//	  String        → uint32 len + raw bytes each
 //
 // This is the fast alternative to JSON for the vectorized fast-lane: decode is a
 // few tight loops over raw bytes — no parsing, no per-value allocation, no boxing.
 // Encode favours simplicity (it is an offline/produce-side step); Decode is the
 // hot path and is hand-rolled for speed. See drift/Specs/Vectorized Fast-Lane.md.
 
-// EncodeBatch serialises b to the binary columnar format. Only Int64/Float64
-// columns are supported.
+// EncodeBatch serialises b to the binary columnar format (Int64/Float64/String/Bool).
 func EncodeBatch(b *core.Batch) ([]byte, error) {
-	for _, c := range b.Cols {
-		if c.Kind != core.KindInt64 && c.Kind != core.KindFloat64 {
-			return nil, fmt.Errorf("vector: EncodeBatch supports Int64/Float64 only, got kind %d", c.Kind)
-		}
-	}
-	// size: header + len + data
-	size := 4
-	for i := range b.Cols {
-		size += 1 + 2 + len(b.Schema.Fields[i].Name)
-	}
-	size += 4 + len(b.Cols)*b.Len*8
+	var buf bytes.Buffer
+	var scratch [8]byte
 
-	out := make([]byte, size)
-	o := 0
-	binary.LittleEndian.PutUint32(out[o:], uint32(len(b.Cols)))
-	o += 4
+	binary.LittleEndian.PutUint32(scratch[:4], uint32(len(b.Cols)))
+	buf.Write(scratch[:4])
 	for i, c := range b.Cols {
-		out[o] = byte(c.Kind)
-		o++
+		buf.WriteByte(byte(c.Kind))
 		name := b.Schema.Fields[i].Name
-		binary.LittleEndian.PutUint16(out[o:], uint16(len(name)))
-		o += 2
-		o += copy(out[o:], name)
+		binary.LittleEndian.PutUint16(scratch[:2], uint16(len(name)))
+		buf.Write(scratch[:2])
+		buf.WriteString(name)
 	}
-	binary.LittleEndian.PutUint32(out[o:], uint32(b.Len))
-	o += 4
+	binary.LittleEndian.PutUint32(scratch[:4], uint32(b.Len))
+	buf.Write(scratch[:4])
+
 	for _, c := range b.Cols {
 		switch c.Kind {
 		case core.KindInt64:
 			for j := 0; j < b.Len; j++ {
-				binary.LittleEndian.PutUint64(out[o:], uint64(c.I64[j]))
-				o += 8
+				binary.LittleEndian.PutUint64(scratch[:8], uint64(c.I64[j]))
+				buf.Write(scratch[:8])
 			}
 		case core.KindFloat64:
 			for j := 0; j < b.Len; j++ {
-				binary.LittleEndian.PutUint64(out[o:], math.Float64bits(c.F64[j]))
-				o += 8
+				binary.LittleEndian.PutUint64(scratch[:8], math.Float64bits(c.F64[j]))
+				buf.Write(scratch[:8])
 			}
+		case core.KindBool:
+			for j := 0; j < b.Len; j++ {
+				if c.B[j] {
+					buf.WriteByte(1)
+				} else {
+					buf.WriteByte(0)
+				}
+			}
+		case core.KindString:
+			for j := 0; j < b.Len; j++ {
+				binary.LittleEndian.PutUint32(scratch[:4], uint32(len(c.Str[j])))
+				buf.Write(scratch[:4])
+				buf.WriteString(c.Str[j])
+			}
+		default:
+			return nil, fmt.Errorf("vector: EncodeBatch unsupported kind %d", c.Kind)
 		}
 	}
-	return out, nil
+	return buf.Bytes(), nil
 }
 
 // DecodeBatch parses the binary columnar format back into a *core.Batch. Hot path.
@@ -90,9 +98,16 @@ func DecodeBatch(data []byte) (*core.Batch, error) {
 		name := string(data[o : o+nameLen])
 		o += nameLen
 		kinds[i] = kind
-		typ := core.FieldTypeFloat
-		if kind == core.KindInt64 {
+		var typ core.FieldType
+		switch kind {
+		case core.KindInt64:
 			typ = core.FieldTypeInt
+		case core.KindFloat64:
+			typ = core.FieldTypeFloat
+		case core.KindString:
+			typ = core.FieldTypeString
+		case core.KindBool:
+			typ = core.FieldTypeBool
 		}
 		fields[i] = core.Field{Name: name, Type: typ}
 	}
@@ -104,11 +119,11 @@ func DecodeBatch(data []byte) (*core.Batch, error) {
 
 	cols := make([]core.Column, numCols)
 	for i := 0; i < numCols; i++ {
-		if o+n*8 > len(data) {
-			return nil, fmt.Errorf("vector: truncated column %d", i)
-		}
 		switch kinds[i] {
 		case core.KindInt64:
+			if o+n*8 > len(data) {
+				return nil, fmt.Errorf("vector: truncated int64 column %d", i)
+			}
 			v := make([]int64, n)
 			for j := 0; j < n; j++ {
 				v[j] = int64(binary.LittleEndian.Uint64(data[o:]))
@@ -116,12 +131,40 @@ func DecodeBatch(data []byte) (*core.Batch, error) {
 			}
 			cols[i] = core.Column{Kind: core.KindInt64, I64: v}
 		case core.KindFloat64:
+			if o+n*8 > len(data) {
+				return nil, fmt.Errorf("vector: truncated float64 column %d", i)
+			}
 			v := make([]float64, n)
 			for j := 0; j < n; j++ {
 				v[j] = math.Float64frombits(binary.LittleEndian.Uint64(data[o:]))
 				o += 8
 			}
 			cols[i] = core.Column{Kind: core.KindFloat64, F64: v}
+		case core.KindBool:
+			if o+n > len(data) {
+				return nil, fmt.Errorf("vector: truncated bool column %d", i)
+			}
+			v := make([]bool, n)
+			for j := 0; j < n; j++ {
+				v[j] = data[o] != 0
+				o++
+			}
+			cols[i] = core.Column{Kind: core.KindBool, B: v}
+		case core.KindString:
+			v := make([]string, n)
+			for j := 0; j < n; j++ {
+				if o+4 > len(data) {
+					return nil, fmt.Errorf("vector: truncated string len in column %d", i)
+				}
+				l := int(binary.LittleEndian.Uint32(data[o:]))
+				o += 4
+				if o+l > len(data) {
+					return nil, fmt.Errorf("vector: truncated string in column %d", i)
+				}
+				v[j] = string(data[o : o+l])
+				o += l
+			}
+			cols[i] = core.Column{Kind: core.KindString, Str: v}
 		default:
 			return nil, fmt.Errorf("vector: unsupported kind %d", kinds[i])
 		}
