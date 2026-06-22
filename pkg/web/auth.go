@@ -17,7 +17,7 @@ func (s *Server) withAuth(h http.Handler) http.Handler {
 	}
 	want := []byte(s.token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" {
 			h.ServeHTTP(w, r)
 			return
 		}

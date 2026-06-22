@@ -10,13 +10,14 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/andrejgribov/drift/pkg/ai"
-	"github.com/andrejgribov/drift/pkg/core"
-	"github.com/andrejgribov/drift/pkg/dlq"
-	"github.com/andrejgribov/drift/pkg/job"
-	"github.com/andrejgribov/drift/pkg/pipeline"
-	"github.com/andrejgribov/drift/pkg/runner"
-	"github.com/andrejgribov/drift/pkg/schema"
+	"github.com/gribovan2005/drift/pkg/ai"
+	"github.com/gribovan2005/drift/pkg/core"
+	"github.com/gribovan2005/drift/pkg/dlq"
+	"github.com/gribovan2005/drift/pkg/job"
+	"github.com/gribovan2005/drift/pkg/metrics"
+	"github.com/gribovan2005/drift/pkg/pipeline"
+	"github.com/gribovan2005/drift/pkg/runner"
+	"github.com/gribovan2005/drift/pkg/schema"
 )
 
 //go:embed static
@@ -104,9 +105,10 @@ func (s *Server) routes() (http.Handler, error) {
 	}
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 
-	// Health
+	// Health + metrics (auth-exempt, for orchestrators / Prometheus)
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/readyz", s.handleReadyz)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 
 	// Monitor API
 	mux.HandleFunc("/api/graph", s.handleGraph)
@@ -158,6 +160,16 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 // handleHealthz always returns 200. Used for liveness probes.
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// handleMetrics serves the current pipeline's metrics in the Prometheus text
+// exposition format. When idle (no pipeline) it returns an empty 200 — a valid
+// empty scrape. Auth-exempt so a scraper can reach it like the health probes.
+func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", metrics.PrometheusContentType)
+	if p := s.provider.Current(""); p != nil {
+		_ = metrics.WritePrometheus(w, p.Snapshot())
+	}
 }
 
 // handleReadyz returns 200 once a pipeline is running and has processed at least
