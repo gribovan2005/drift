@@ -280,12 +280,37 @@ rows, GOMAXPROCS=8:
 
 → Independent lanes scale better than the shared-channel lane (5.93× vs 5.42× at 8)
 by removing the funnel. The remaining gap from 8× is the laptop's
-performance/efficiency-core split + scheduler, not the engine. For correct **keyed**
-aggregation across lanes the input must be sharded by key (each key → one lane);
-otherwise lanes produce per-lane partials.
+performance/efficiency-core split + scheduler, not the engine. Correct **keyed**
+aggregation across lanes no longer needs key-sharded input — see Distributed GROUP BY
+below.
 
 ```bash
 go test ./tests/bench/ -run Lanes -v -count=1
+```
+
+### Distributed GROUP BY across lanes (`DistGroupBy`)
+
+Each lane computes a **partial** `vector.GroupBy` over its shard (no shared channel),
+then one cheap `gb.MergeOp()` folds the per-lane partials into the global result
+(count/sum → sum, max → max). The merge cost scales with **#keys, not #rows**, so the
+group-by stays global-correct for **arbitrarily distributed** input — no key/partition
+sharding required. 8M rows, 2000 keys, GOMAXPROCS=8:
+
+| lanes | rows/sec | vs 1 |
+|---|---:|---:|
+| 1 | 87.2 M/s | 1.00× |
+| 2 | 176.4 M/s | 2.02× |
+| 4 | 361.5 M/s | 4.14× |
+| 8 | **374.2 M/s** | **4.29×** |
+
+→ Near-linear to 4 lanes; the group-by is memory-bound on per-key map lookups, so 8
+lanes saturate the laptop's memory subsystem (and perf/efficiency cores) before
+hitting 8×. The merge stage is negligible (folds only `lanes × keys` partial rows).
+This makes an *unsharded* keyed aggregation correct across `RunLanes` — the
+distributed-aggregation gap from the N-lane work is closed.
+
+```bash
+go test ./tests/bench/ -run DistGroupBy -v -count=1
 ```
 
 ### End-to-end with binary decode (`cmd/e2ebench`)

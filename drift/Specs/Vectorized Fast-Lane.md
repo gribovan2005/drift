@@ -96,7 +96,8 @@ func (g *Group) Count(out string) *Group
 func (g *Group) SumInt64(valField, out string) *Group
 func (g *Group) SumFloat64(valField, out string) *Group
 func (g *Group) MaxInt64(valField, out string) *Group
-func (g *Group) Op() core.Operator          // build the operator
+func (g *Group) Op() core.Operator          // build the per-lane / global operator
+func (g *Group) MergeOp() core.Operator      // merge per-lane partial result chunks → global result
 
 // Event-time TUMBLING keyed aggregation (Flusher; periodic emit as windows close)
 func TumblingGroup(keyField, tsField string, size int64) *WGroup  // ts: int64 column
@@ -130,6 +131,17 @@ func Parallel(n int, mk func() core.Operator) core.Operator
   per aggregate (`Count`/`SumInt64`/`SumFloat64`/`MaxInt64`), keys in sorted order.
   It is **single-stage** (don't wrap in `Parallel` — partials). Global = emits once
   at end of stream; windowed keyed group-by is future work.
+- **`GroupBy(key).<aggs>.MergeOp()`** makes the group-by **distributed across lanes**:
+  run `gb.Op()` in each independent lane (see `pipeline.RunLanes`) to get a per-lane
+  **partial** result chunk, then feed all partials through `gb.MergeOp()` to fold them
+  into the single global result. Combine rules are exact because every aggregate is
+  associative — `Count`/`Sum` compose by addition, `Max` by maximum (Count partials
+  re-sum into the count). So an **unsharded** keyed aggregation is global-correct over
+  arbitrarily distributed input — no key/partition sharding required. The merge cost
+  scales with **#keys, not #rows** (it folds only `lanes × keys` partial rows); the
+  output schema is byte-identical to a single global `GroupBy`. Empty partials (a lane
+  that got no input) are skipped. Same builder defines both stages, so the aggregate
+  set always matches. See [[Benchmarks]] (DistGroupBy).
 - **`TumblingGroup(key, ts, size).<aggs>.Op()`** is **event-time tumbling** keyed
   aggregation — the columnar mirror of `operator.EventTimeWindow`, but keyed. Rows
   bucket into windows `[start, start+size)` by an int64 `ts` column; the watermark is
@@ -184,7 +196,8 @@ N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-e
 ## Scope (honest)
 
 - **In scope:** `Int64`/`Float64`/`String`/`Bool` columns; `Map`/`Filter`; global
-  aggregates (`Sum`/`Max`/`Count`); **keyed global GROUP BY** (`GroupBy`) and
+  aggregates (`Sum`/`Max`/`Count`); **keyed global GROUP BY** (`GroupBy`) +
+  **distributed across lanes** via partials + `MergeOp` (no key-sharding needed) and
   **event-time tumbling keyed aggregation** (`TumblingGroup`, Int64/String keys,
   int64 ts column); **build-side hash join** (`HashJoin`, dimension enrichment);
   per-stage parallelism (`Parallel`); columnar mem source + collect/discard sinks +
