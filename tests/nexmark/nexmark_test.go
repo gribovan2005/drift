@@ -49,6 +49,9 @@ func TestNexmarkThroughput(t *testing.T) {
 	if testing.Short() {
 		t.Skip("throughput run skipped in -short")
 	}
+	if raceEnabled {
+		t.Skip("throughput run skipped under -race (instrumentation distorts timing and exceeds CI timeouts)")
+	}
 	const events = 2_000_000
 
 	t.Logf("Nexmark on Drift — %d bid events, single process\n", events)
