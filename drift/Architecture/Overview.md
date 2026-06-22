@@ -33,7 +33,7 @@ Channels between stages are **buffered (256 records)**. Batch size per `Process`
 
 ## Parallelism
 
-Two levels, both within one process:
+Three levels, all within one process:
 
 - **Pipeline (inter-stage)** — every stage is its own goroutine; all stages run
   concurrently across cores (an assembly line). Fan-out branches also run in
@@ -43,6 +43,11 @@ Two levels, both within one process:
   shard round-robin; keyed ops (dedup, session) shard by key (correctness kept);
   global windows (tumbling, eventwindow) cannot be sharded. The executor is
   unchanged — `Parallel` is an operator decorator. See [[Operators]].
+- **Inter-pipeline (N-lane)** — `pipeline.RunLanes` / `sdk.RunLanes` run N fully
+  independent pipelines (own source + sink each, no shared channel), the
+  task-per-partition model. Highest single-node scaling (no funnel); fail-fast. Pair
+  with the parallel triad (parallel source decode + `vector.Parallel` + `sink.Parallel`)
+  inside each lane. See [[Benchmarks]] (Lanes/MaxLane).
 
 ## Non-goals (permanent)
 
@@ -92,11 +97,14 @@ stream engine". All shipped:
   Map/Filter, global + keyed `GroupBy`, event-time `TumblingGroup`, and build-side
   `HashJoin` (dimension enrichment) are done; **stream-stream (mixed) joins**,
   left-outer/M:N joins, and sliding/session windows stay on the row engine.
-- **Fully independent N-lane pipelines** — the parallel triad is done (parallel
-  source decode + `vector.Parallel` compute + `sink.Parallel`), and the end-to-end
-  columnar lane now scales ~5.4× at 8 shards (see [[Benchmarks]] MaxLane). To go
-  further, run N independent source→sink lanes (no shared channel) — a larger change
-  than the additive wrappers.
+- **Distributed keyed aggregation across lanes** — `pipeline.RunLanes` / `sdk.RunLanes`
+  run N independent pipelines (no shared channel), scaling ~5.9× at 8 lanes vs the
+  shared-channel ~5.4× (see [[Benchmarks]] Lanes). Keyed correctness across lanes
+  currently requires key/partition-sharded input; built-in key-hash sharding +
+  cross-lane result merge (so an unsharded `GroupBy` is global-correct across lanes)
+  is the next step.
+- **Left-outer / M:N joins** (need NULL columns) and **sliding/session** columnar
+  windows remain on the row engine.
 - **Copy-on-fan-out for chunks** — vectorized ops mutate batches in place (safe for
   linear pipelines only); a branching DAG sharing a chunk needs a copy.
 - **Non-linear DAG in the SDK builder** — the row engine supports DAGs via

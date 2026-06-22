@@ -264,6 +264,30 @@ entirely — a larger change.)
 go test ./tests/bench/ -run MaxLane -v -count=1
 ```
 
+### Independent N-lane pipelines (`Lanes`)
+
+The last serial cost in MaxLane is the **shared channel** at each engine edge.
+`pipeline.RunLanes` drops it: N fully independent pipelines (own source + sink each),
+the Flink/Kafka-Streams task-per-partition model. Same compute-bound workload, 4M
+rows, GOMAXPROCS=8:
+
+| lanes | rows/sec | vs 1 | (MaxLane shared-channel) |
+|---|---:|---:|---:|
+| 1 | 2.13 M/s | 1.00× | 2.11 M/s |
+| 2 | 4.15 M/s | 1.95× | 4.11 M/s |
+| 4 | 7.69 M/s | 3.61× | 7.44 M/s |
+| 8 | **12.64 M/s** | **5.93×** | 11.42 M/s (5.42×) |
+
+→ Independent lanes scale better than the shared-channel lane (5.93× vs 5.42× at 8)
+by removing the funnel. The remaining gap from 8× is the laptop's
+performance/efficiency-core split + scheduler, not the engine. For correct **keyed**
+aggregation across lanes the input must be sharded by key (each key → one lane);
+otherwise lanes produce per-lane partials.
+
+```bash
+go test ./tests/bench/ -run Lanes -v -count=1
+```
+
 ### End-to-end with binary decode (`cmd/e2ebench`)
 
 The fairer test: data arrives **as frames** that are **decoded in the hot path**
