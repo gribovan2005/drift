@@ -74,7 +74,17 @@ Builder options (wrap `pipeline.Option`):
 func WithLogger(l *slog.Logger) Option
 func WithCheckpoint(s checkpoint.Store) Option
 func WithLineage(t *lineage.Tracker) Option
+
+// Resource profiles & tuning knobs — see [[Resource Profiles]]
+func WithProfile(p Profile) Option         // Sidecar / Dedicated presets
+func WithBatchSize(n int) Option           // stage batch size
+func WithChannelBuffer(n int) Option       // global channel buffer
+func WithMaxLinger(d time.Duration) Option // time-based partial-batch flush
 ```
+
+`WithProfile(sdk.Sidecar)` applies local knobs only (safe when embedded);
+`WithProfile(sdk.Dedicated.OwnsProcess())` also tunes process-global
+`GOMAXPROCS`/`GOGC`/`GOMEMLIMIT`. See [[Resource Profiles]].
 
 ### Source / sink
 
