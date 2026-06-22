@@ -105,4 +105,4 @@ jobs:
       - name: Kafka integration tests
         env:
           KAFKA_ADDR: localhost:9092
-        run: go test -v -timeout 120s ./pkg/source/... ./pkg/sink/... -run 'TestKafka'
+        run: go test -v -timeout 120s ./pkg/source/... ./pkg/sink/... ./pkg/vector/... -run 'TestKafka'

@@ -446,6 +446,21 @@ func (p *Pipeline) saveCheckpoints(log *slog.Logger) {
 
 // runStage reads from in, batches records, calls op.Process, and writes
 // results to out. Closes out when in is exhausted or ctx is cancelled.
+// rowsIn counts logical rows in a batch: a chunk-record (vectorized fast-lane)
+// contributes Batch.Len rows, a normal row record contributes 1. This keeps
+// pipeline metrics (ProcessedTotal/throughput) row-accurate for columnar stages.
+func rowsIn(batch []core.Record) int {
+	n := 0
+	for i := range batch {
+		if batch[i].Chunk != nil {
+			n += batch[i].Chunk.Len
+		} else {
+			n++
+		}
+	}
+	return n
+}
+
 func runStage(
 	ctx context.Context,
 	cancel context.CancelFunc,
@@ -479,7 +494,7 @@ func runStage(
 		}
 		start := time.Now()
 		result, err := op.Process(batch)
-		sm.Record(len(batch), time.Since(start), err)
+		sm.Record(rowsIn(batch), time.Since(start), err)
 		batch = batch[:0]
 		if err != nil {
 			log.Error("process error", "err", err)

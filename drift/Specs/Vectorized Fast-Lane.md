@@ -150,8 +150,10 @@ N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-e
   fast-lane does **not** replace the engine.
 - **Caveats:** vectorized Map/Filter mutate chunks in place — correct for a linear
   pipeline; a fan-out DAG sharing a chunk would need a copy (not provided this
-  iteration). Pipeline metrics count chunk-records, not rows. Chunk-records must not
-  hit JSON/row sinks directly — use `ToRows` first.
+  iteration). Chunk-records must not hit JSON/row sinks directly — use `ToRows` first.
+- Pipeline metrics are **row-accurate** for chunk-records: `runStage` counts
+  `Batch.Len` rows per chunk (not 1 per chunk-record), so ProcessedTotal/throughput
+  reflect real rows.
 
 ---
 
