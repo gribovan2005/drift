@@ -98,6 +98,12 @@ func (g *Group) SumFloat64(valField, out string) *Group
 func (g *Group) MaxInt64(valField, out string) *Group
 func (g *Group) Op() core.Operator          // build the operator
 
+// Event-time TUMBLING keyed aggregation (Flusher; periodic emit as windows close)
+func TumblingGroup(keyField, tsField string, size int64) *WGroup  // ts: int64 column
+func (g *WGroup) Lateness(l int64) *WGroup                        // allowed lateness (same unit)
+func (g *WGroup) Count/SumInt64/SumFloat64/MaxInt64(...) *WGroup
+func (g *WGroup) Op() core.Operator
+
 // Parallel: run n copies of a stateless op across n goroutines (round-robin chunks)
 func Parallel(n int, mk func() core.Operator) core.Operator
 ```
@@ -119,6 +125,15 @@ func Parallel(n int, mk func() core.Operator) core.Operator
   per aggregate (`Count`/`SumInt64`/`SumFloat64`/`MaxInt64`), keys in sorted order.
   It is **single-stage** (don't wrap in `Parallel` — partials). Global = emits once
   at end of stream; windowed keyed group-by is future work.
+- **`TumblingGroup(key, ts, size).<aggs>.Op()`** is **event-time tumbling** keyed
+  aggregation — the columnar mirror of `operator.EventTimeWindow`, but keyed. Rows
+  bucket into windows `[start, start+size)` by an int64 `ts` column; the watermark is
+  `maxTs − lateness`; a window **fires during `Process`** (periodic emit) once its
+  end ≤ watermark, emitting a chunk `[ts(window start), key, aggs...]` (rows ordered
+  by window, then key); rows for an already-fired window are dropped as late. `Flush`
+  fires all remaining open windows. `size`/`lateness` are int64 in the ts column's
+  unit. Single-stage. Out-of-order/stalled streams keep windows open (memory) — same
+  property as the row operator; lateness bounds it.
 - **`Parallel(n, mk)`** wraps `pipeline.Parallel`: it round-robins whole chunk-
   records across `n` fresh operators on `n` goroutines, so a CPU-heavy vectorized
   stage scales with cores (measured ~5.8× at 8 cores; see [[Benchmarks]]). Each
@@ -156,12 +171,13 @@ N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-e
 ## Scope (honest)
 
 - **In scope:** `Int64`/`Float64`/`String`/`Bool` columns; `Map`/`Filter`; global
-  aggregates (`Sum`/`Max`/`Count`); **keyed global GROUP BY** (`GroupBy`, Int64/String
-  keys); per-stage parallelism (`Parallel`); columnar mem source + collect/discard
-  sinks + a row bridge. Covers the stateless transform hot path plus
-  `SELECT key, count/sum/max ... [WHERE ...] GROUP BY key`.
-- **Out of scope (stay on the row path):** **windowed** keyed aggregations, joins,
-  schema evolution, WAL. The binary codec covers all four column kinds
+  aggregates (`Sum`/`Max`/`Count`); **keyed global GROUP BY** (`GroupBy`) and
+  **event-time tumbling keyed aggregation** (`TumblingGroup`, Int64/String keys,
+  int64 ts column); per-stage parallelism (`Parallel`); columnar mem source +
+  collect/discard sinks + a row bridge. Covers the stateless hot path plus
+  `SELECT [tumble(ts,size),] key, count/sum/max ... [WHERE ...] GROUP BY ...`.
+- **Out of scope (stay on the row path):** joins, sliding/session windows, schema
+  evolution, WAL. The binary codec covers all four column kinds
   (Int64/Float64 fixed-width, Bool 1 byte, String length-prefixed). The fast-lane
   does **not** replace the engine.
 - **Caveats:** vectorized Map/Filter mutate chunks in place — correct for a linear
