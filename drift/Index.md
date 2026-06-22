@@ -25,6 +25,7 @@ Streaming data processing engine for Go. Single binary, zero external dependenci
 - [[Parallel Source]] — fan-in N sources / Kafka partitions to lift the single-reader ingestion ceiling
 - [[SDK]] — single-import fluent facade for embedding Drift in Go services (subpackage `drift/sdk`)
 - [[Resource Profiles]] — Sidecar/Dedicated tuning presets (batch/buffer/linger + opt-in runtime knobs)
+- [[Vectorized Fast-Lane]] — columnar Batch + chunk-records + vectorized Map/Filter (`pkg/core` Batch, `pkg/vector`)
 - [[Metrics Export]] — Prometheus text exposition over `Snapshot()` (`pkg/metrics`, `sdk.PrometheusHandler`, `GET /metrics`)
 - [[AI Debugger]] — metrics → Claude → plain-language diagnosis
 - [[CLI & Jobs]] — declarative YAML jobs + operator registry, `drift run/validate/graph/list`

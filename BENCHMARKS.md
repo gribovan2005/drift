@@ -160,6 +160,34 @@ build: `KeyedCountWindow` (group-by), `TopN`, `Join` (mixed-stream hash equi-joi
 
 ---
 
+## Vectorized fast-lane — the record format was the wall
+
+The row engine stores each value in a `map[string]any` (boxed + GC-scanned). The
+columnar fast-lane (`pkg/vector` + `core.Batch`) stores typed columns
+(`[]int64`/`[]float64`) and processes them in tight loops — no map, no boxing, no
+per-row alloc. Same logical workload — `Filter(even)` then `Map(+1)` over 5M ints,
+`GOMAXPROCS=1` (`tests/bench/vector_bench_test.go`):
+
+| path | rows/sec |
+|---|---:|
+| row (`map[string]any`) | 1.20 M/s |
+| **vec (columnar Int64)** | **296 M/s** (~247×) |
+
+→ Changing only the representation is ~**two orders of magnitude**. This is the
+in-memory columnar **compute** ceiling on one core — it proves Drift's processing
+is not the bottleneck; the `map[string]any` format was. Real ingestion (JSON
+decode, broker, network) becomes the new cap, which is what parallel partition
+reads ([[Parallel Source]]) and a future binary decode address.
+
+Honest scope: Int64/Float64 `Map`/`Filter` only; aggregations/windows/joins stay on
+the row path (see [[Vectorized Fast-Lane]]).
+
+```bash
+go test ./tests/bench/ -run VectorVsRow -v -count=1
+```
+
+---
+
 ## Reproduce
 
 ```bash

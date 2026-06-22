@@ -1,0 +1,137 @@
+---
+component: vectorized-fastlane
+status: stable
+package: pkg/core (Batch), pkg/vector
+tested: true
+---
+
+# Vectorized Fast-Lane (columnar)
+
+`map[string]any` is the throughput wall: every value is boxed (heap alloc) and GC
+must scan a huge live heap (measured — parallel pipelines plateau ~3–4 M/s on it).
+The fast-lane processes data **columnar** — typed slices, no map, no boxing, tight
+per-column loops — the model ClickHouse/Arroyo use. It is **additive**: the
+existing row (`map[string]any`) engine is untouched; windows/joins/rich operators
+stay on the row path.
+
+## Integration: chunk-records (runs in the normal pipeline)
+
+The fast-lane needs **no new executor**. A columnar block of N rows travels through
+`pipeline.Pipeline` as a single **chunk-record**: a `core.Record` whose `Chunk`
+field holds a `*core.Batch`. Because a chunk *is* a `core.Record`, vectorized
+operators are ordinary `core.Operator`s and the existing channels/DAG/runStage/
+metrics are unchanged. Batches pass between vectorized stages **without** row
+materialisation — conversion to rows happens only at a row-operator boundary or a
+row sink (`vector.ToRows`). It composes with the SDK directly (every constructor
+returns a `core.*` type):
+
+```go
+sdk.New().
+    From(vector.MemSource(batches)).
+    Apply(vector.FilterInt64("v", func(x int64) bool { return x%2 == 0 })).
+    Apply(vector.MapInt64("v", func(x int64) int64 { return x + 1 })).
+    To(vector.Discard()).
+    Run(ctx)
+```
+
+---
+
+## Types (`pkg/core/batch.go`)
+
+`pkg/core` keeps its no-import rule — `Batch` uses only stdlib + the existing
+`Schema`.
+
+```go
+type ColumnKind uint8
+const ( KindInt64 ColumnKind = iota; KindFloat64; KindString; KindBool )
+
+type Column struct {
+    Kind ColumnKind
+    I64  []int64
+    F64  []float64
+    Str  []string
+    B    []bool
+}
+
+type Batch struct {
+    Schema Schema   // field names + types
+    Len    int      // valid rows (≤ cap of the column slices)
+    Cols   []Column // parallel to Schema.Fields
+}
+
+func (b *Batch) Int64(field string) []int64      // nil if missing/wrong kind
+func (b *Batch) Float64(field string) []float64
+func (b *Batch) copyRow(dst, src int)            // align all columns (compaction)
+func (b *Batch) truncate(n int)                  // shrink all columns to n
+```
+
+And one additive field on `Record` (nil for normal row records, `omitempty` so the
+JSON wire format is unchanged):
+
+```go
+type Record struct { ... ; Chunk *Batch `json:"chunk,omitempty"` }
+```
+
+## Operators (`pkg/vector`, implements `core.Operator`)
+
+```go
+func MapInt64(field string, fn func(int64) int64) core.Operator
+func FilterInt64(field string, pred func(int64) bool) core.Operator
+func MapFloat64(field string, fn func(float64) float64) core.Operator
+func FilterFloat64(field string, pred func(float64) bool) core.Operator
+```
+
+- Map runs a tight in-place loop over one column across each chunk in the batch.
+- Filter computes the keep set and **compacts all columns** in place (via
+  `copyRow`) then `truncate`s, updating `Batch.Len`. No per-row alloc, no boxing.
+- `OnSchemaChange` is a no-op — the schema travels inside each `Batch`.
+- Chunks with `Chunk == nil` (stray row records) pass through untouched.
+
+## Source / sink / bridge (`pkg/vector`)
+
+```go
+func MemSource(batches []*core.Batch) core.Source   // emits one chunk-record per batch
+func GenInt64(field string, nBatches, rows int, fill func(i int) int64) []*core.Batch // bench/test helper
+func Collect() *Collector                            // keeps chunks; .Rows() / .Batches()
+func Discard() core.Sink                              // drains chunk-records
+func ToRows() core.Operator                          // expand a chunk → row Records (handoff to row path/sinks)
+```
+
+---
+
+## Scope (honest)
+
+- **In scope:** `Int64` + `Float64` columns; `Map`/`Filter`; columnar mem source +
+  collect/discard sinks + a row bridge. This covers the stateless transform hot
+  path where the throughput claim lives.
+- **Out of scope (stay on the row path):** `String`/`Bool` ops (the `Kind`s exist
+  for forward-compat but have no ops yet), aggregations, windows, joins, schema
+  evolution, JSON sources/sinks, WAL. The fast-lane does **not** replace the engine.
+- **Caveats:** vectorized Map/Filter mutate chunks in place — correct for a linear
+  pipeline; a fan-out DAG sharing a chunk would need a copy (not provided this
+  iteration). Pipeline metrics count chunk-records, not rows. Chunk-records must not
+  hit JSON/row sinks directly — use `ToRows` first.
+
+---
+
+## Required tests (no mocks; real `pipeline.New`/SDK; `-race` green)
+
+- `pkg/core`: `Int64`/`Float64` accessors (incl. missing/wrong-kind → nil),
+  `copyRow`/`truncate` keep columns aligned, `Record.Chunk` JSON omitempty (a normal
+  row record marshals without a `chunk` key).
+- `pkg/vector`: `MapInt64`/`MapFloat64` correctness **through `pipeline.New`**;
+  `FilterInt64` compaction with a second column to prove alignment + `Len` update;
+  end-to-end Filter+Map via the SDK matches the equivalent row pipeline result;
+  `ToRows` expands a chunk to the right row records.
+- `tests/bench`: vectorized Filter+Map over an Int64 column vs the equivalent
+  `map[string]any` row pipeline — expect a large multiple (documented in
+  [[Benchmarks]]).
+
+---
+
+## See also
+
+- [[Core Abstractions]] — Record/Operator the chunk-record extends
+- [[Parallel Source]] — parallel ingestion that feeds the fast-lane
+- [[Benchmarks]] — the `map[string]any` ceiling this lifts
+- [[SDK]] — the fluent builder vectorized ops plug into via `Apply`
