@@ -206,6 +206,24 @@ compute (not the source) is the bound.
 go test ./tests/bench/ -run VectorParallelStage -v -count=1
 ```
 
+### Vectorized GROUP BY (`vector.GroupBy`)
+
+Keyed aggregation — `GROUP BY cat → count(*), sum(amt)` — columnar vs the row path.
+2M rows, 1000 keys:
+
+| path | rows/sec | vs row |
+|---|---:|---:|
+| row (`map[string]any` hash-agg) | 2.87 M/s | 1.00× |
+| **vec (columnar)** | **68.95 M/s** | **~24×** |
+
+→ Even with the per-row map lookup inherent to hash-aggregation, the columnar path
+is ~24× faster — no `map[string]any` per record, no boxing, columns fetched once
+per chunk. Global keyed group-by (emits on flush); windowed keyed is future work.
+
+```bash
+go test ./tests/bench/ -run VectorGroupBy -v -count=1
+```
+
 ### End-to-end with binary decode (`cmd/e2ebench`)
 
 The fairer test: data arrives **as frames** that are **decoded in the hot path**
