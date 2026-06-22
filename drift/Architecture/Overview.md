@@ -93,19 +93,19 @@ stream engine". All shipped:
 | **Prometheus metrics export** | ✅ done | dependency-free text exposition over `pipeline.Snapshot()`; `sdk.PrometheusHandler`, auth-exempt `GET /metrics`. See [[Metrics Export]] |
 | **Resource profiles** | ✅ done | `Sidecar`/`Dedicated` presets (batch/buffer/linger + opt-in process-global knobs); SDK (`WithProfile`) **and** YAML/runner (`profile:` field). See [[Resource Profiles]] |
 | **Parallel triad (source/stage/sink)** | ✅ done | `source.NewParallel` (+ Kafka partition readers) for decode, `vector.Parallel` for compute, `sink.Parallel` for egress — every serial point parallel; full columnar lane scales ~5.4× @8 (MaxLane). See [[Parallel Source]], [[Benchmarks]] |
-| **Vectorized fast-lane** | ✅ done | columnar `core.Batch` carried as chunk-records; Int64/Float64/String/Bool `Map`/`Filter` + global `Sum`/`Count`/`Max` + **keyed `GroupBy`** (+ **distributed across lanes** via partials + `MergeOp`, no key-sharding needed) + **event-time `TumblingGroup`/`SlidingGroup`/`SessionGroup`** (watermark, periodic emit) + **build-side `HashJoin`** (dimension enrichment, inner + left-outer + M:N w/ NULL-mask columns); binary codec (all four kinds) + `KafkaColumnarSource`; `vector.Parallel` per-stage scaling; row-accurate metrics. **~247× on the stateless hot path, ~24× on group-by, ~52M rows/s over real Kafka.** See [[Vectorized Fast-Lane]], [[Benchmarks]] |
+| **Vectorized fast-lane** | ✅ done | columnar `core.Batch` carried as chunk-records; Int64/Float64/String/Bool `Map`/`Filter` + global `Sum`/`Count`/`Max` + **keyed `GroupBy`** (+ **distributed across lanes** via partials + `MergeOp`, no key-sharding needed) + **event-time `TumblingGroup`/`SlidingGroup`/`SessionGroup`** (watermark, periodic emit) + **build-side `HashJoin`** (dimension enrichment, inner + left-outer + M:N w/ NULL-mask columns) + **stream-stream `StreamJoin`** (event-time interval join, watermark state cleanup); binary codec (all four kinds) + `KafkaColumnarSource`; `vector.Parallel` per-stage scaling; row-accurate metrics. **~247× on the stateless hot path, ~24× on group-by, ~52M rows/s over real Kafka.** See [[Vectorized Fast-Lane]], [[Benchmarks]] |
 
 ### Next (not yet built — explicit scope, not bugs)
 
-- **Vectorized stream-stream joins** — columnar Map/Filter, global + keyed `GroupBy`,
-  event-time `TumblingGroup`/`SlidingGroup`/`SessionGroup`, and build-side `HashJoin`
-  (dimension enrichment, **inner + left-outer + M:N** via NULL-mask columns and
-  `MultiMatch` fan-out) are done; **stream-stream (mixed) joins** stay on the row
-  engine.
-- (Done: inner + left-outer + M:N joins with NULL-mask columns; tumbling + sliding +
-  session columnar windows; copy-on-fan-out for chunks; **non-linear DAG in the SDK
-  builder** via `Stream.Branch` — fan-out to N sub-chains, fan-in at the sink, with
-  per-branch record copies. Remaining columnar gap is stream-stream mixed joins.)
+The columnar fast-lane roadmap is **complete**: columnar Map/Filter, global + keyed
+`GroupBy` (+ distributed across lanes via `MergeOp`), event-time
+`TumblingGroup`/`SlidingGroup`/`SessionGroup`, build-side `HashJoin`
+(inner + left-outer + M:N via NULL-mask columns and `MultiMatch`), **stream-stream
+`StreamJoin`** (event-time interval join with watermark state cleanup), copy-on-fan-out
+for chunks, and **non-linear DAG in the SDK builder** (`Stream.Branch`) are all done.
+
+Only intentionally row-path features remain off the fast-lane: **schema evolution** and
+**WAL/exactly-once** (these live on the row engine by design).
 
 (Horizontal scale-out with coordinated partitioned state + rebalance remains a
 **permanent non-goal** for the core — that's Flink/Kafka-Streams territory; run N
