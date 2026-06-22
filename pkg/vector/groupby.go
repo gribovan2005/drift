@@ -141,6 +141,26 @@ func applyAggs(a *acc, aggs []aggSpec, i int, i64cols [][]int64, f64cols [][]flo
 	}
 }
 
+// combineAcc folds accumulator src into dst (associative merge), used when two
+// session windows merge: Count/Sum add, Max takes the maximum.
+func combineAcc(dst, src *acc, aggs []aggSpec) {
+	dst.count += src.count
+	for j, ag := range aggs {
+		switch ag.kind {
+		case aggSumInt64:
+			dst.i64[j] += src.i64[j]
+		case aggSumFloat64:
+			dst.f64[j] += src.f64[j]
+		case aggMaxInt64:
+			if src.seen[j] && (!dst.seen[j] || src.i64[j] > dst.i64[j]) {
+				dst.i64[j], dst.seen[j] = src.i64[j], true
+			}
+		case aggCount:
+			// counted via dst.count
+		}
+	}
+}
+
 // aggFields returns the output Field for each aggregate column.
 func aggFields(aggs []aggSpec) []core.Field {
 	out := make([]core.Field, len(aggs))

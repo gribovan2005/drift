@@ -100,11 +100,18 @@ func (g *Group) MaxInt64(valField, out string) *Group
 func (g *Group) Op() core.Operator          // build the per-lane / global operator
 func (g *Group) MergeOp() core.Operator      // merge per-lane partial result chunks → global result
 
-// Event-time TUMBLING keyed aggregation (Flusher; periodic emit as windows close)
-func TumblingGroup(keyField, tsField string, size int64) *WGroup  // ts: int64 column
+// Event-time TUMBLING / SLIDING keyed aggregation (Flusher; periodic emit as windows close)
+func TumblingGroup(keyField, tsField string, size int64) *WGroup       // ts: int64 column
+func SlidingGroup(keyField, tsField string, size, hop int64) *WGroup   // overlapping (hop) windows
 func (g *WGroup) Lateness(l int64) *WGroup                        // allowed lateness (same unit)
 func (g *WGroup) Count/SumInt64/SumFloat64/MaxInt64(...) *WGroup
 func (g *WGroup) Op() core.Operator
+
+// Event-time SESSION keyed aggregation (gap-based dynamic windows; Flusher)
+func SessionGroup(keyField, tsField string, gap int64) *SGroup
+func (g *SGroup) Lateness(l int64) *SGroup
+func (g *SGroup) Count/SumInt64/SumFloat64/MaxInt64(...) *SGroup
+func (g *SGroup) Op() core.Operator
 
 // Build-side hash join (enrich a probe stream with a dimension/lookup table)
 func HashJoin(build []*core.Batch, buildKey, probeKey string) *HJoin
@@ -154,6 +161,20 @@ func Parallel(n int, mk func() core.Operator) core.Operator
   fires all remaining open windows. `size`/`lateness` are int64 in the ts column's
   unit. Single-stage. Out-of-order/stalled streams keep windows open (memory) — same
   property as the row operator; lateness bounds it.
+- **`SlidingGroup(key, ts, size, hop).<aggs>.Op()`** generalises tumbling to
+  **overlapping** (hop) windows: a row at `ts` contributes to every hop-aligned window
+  `[s, s+size)` with `s ∈ (ts-size, ts]`, so consecutive windows overlap by
+  `size-hop`. Tumbling is exactly `hop == size` (one window per row); same
+  watermark/late-drop/periodic-emit/`Flush`/output-shape — only the per-row assignment
+  fans out. Both share one `windowOp`.
+- **`SessionGroup(key, ts, gap).<aggs>.Op()`** is **event-time session** aggregation —
+  the columnar mirror of `operator.SessionWindow`, keyed. Per key, a row extends a
+  session if `ts ∈ [min-gap, max+gap]`, else opens a new one; sessions within `gap` of
+  each other **merge** (out-of-order events can bridge two sessions into one). It uses
+  **combinable accumulators** (no per-row buffering — merging folds accs: Count/Sum
+  add, Max maxes). A session **fires during `Process`** once `max+gap ≤ watermark`
+  (`maxTs − lateness`), emitting `[ts(session start), key, aggs...]` ordered by
+  (start, key); `Flush` fires all remaining. Single-stage.
 - **`HashJoin(build, buildKey, probeKey).Bring(...).Op()`** is a **build-side hash
   join** (DuckDB/Velox-style): a lookup table is built once from the `build` batches
   (key → row), then each probe chunk is matched by `probeKey` and **enriched** with
@@ -225,16 +246,17 @@ N `BinSource`s in `source.NewParallel` to read partitions concurrently. End-to-e
 - **In scope:** `Int64`/`Float64`/`String`/`Bool` columns; `Map`/`Filter`; global
   aggregates (`Sum`/`Max`/`Count`); **keyed global GROUP BY** (`GroupBy`) +
   **distributed across lanes** via partials + `MergeOp` (no key-sharding needed) and
-  **event-time tumbling keyed aggregation** (`TumblingGroup`, Int64/String keys,
-  int64 ts column); **build-side hash join** (`HashJoin`, dimension enrichment, inner
+  **event-time tumbling/sliding/session keyed aggregation** (`TumblingGroup`,
+  `SlidingGroup`, `SessionGroup`; Int64/String keys, int64 ts column); **build-side
+  hash join** (`HashJoin`, dimension enrichment, inner
   **and left-outer** via NULL-mask columns, **and M:N** fan-out via `MultiMatch`);
   per-stage parallelism (`Parallel`);
   columnar mem source + collect/discard sinks +
   a row bridge. Covers the stateless hot path plus
   `SELECT [tumble(ts,size),] key, count/sum/max ..., dim.attr [WHERE ...]
   [JOIN dim] [GROUP BY ...]`.
-- **Out of scope (stay on the row path):** stream-stream (mixed) joins,
-  sliding/session windows, schema evolution, WAL. The
+- **Out of scope (stay on the row path):** stream-stream (mixed) joins, schema
+  evolution, WAL. The
   binary codec covers all four column kinds
   (Int64/Float64 fixed-width, Bool 1 byte, String length-prefixed) but **not** the NULL
   mask yet (`EncodeBatch` errors on a null column). The fast-lane does **not** replace
